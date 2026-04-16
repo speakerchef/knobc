@@ -47,7 +47,7 @@ source.knv → Lexer → Pratt Parser → AST → Codegen → AArch64 ASSEMBLY �
 | Logical | `&&` `\|\|` | Boolean logic on truthy/falsy values |
 | Bitwise | `&` `\|` `^` | AND, OR, XOR |
 | Bit Shift | `<<` `>>` | LSL, LSR |
-| Unary | `++` `--` `-` | Increment/Decrement (pre & post), negation |
+| Unary | `-` | negation |
 | Operate-Assign | `+=` `-=` `*=` `/=` `%=` `**=` `&=` `\|=` `<<=` `>>=` | Combine operation and assignment |
 
 ### Other Features
@@ -161,21 +161,17 @@ exit hash & 255;
 
 ## Build & Generate Executable
 
-> **Requires:** CMake, Clang/GCC with C++23 support, AArch64 target (Apple Silicon Mac)
+> **Requires:** Cargo, Clang/GCC for linker, AArch64 target (Apple Silicon Mac)
 
 ```bash
-# Build the compiler
-cmake -S . -B build/
-cd build
-cmake --build .
+# Run
+cargo run <FILE.knv> <EXEC-NAME>
 
-# Optional: Alias to use `klc` anywhere on your system
-alias klc='path/to/klc-compiler/build/klc'
-
-# Generate assembly and executable (MacOS Only for now)
-./klc <FILE.knv> <EXEC-NAME> 
-
-# Or if aliased:
+# Optional: Build and alias
+cargo build
+cd target/debug
+alias klc="path/to/klc"
+# Run
 klc <FILE.knv> <EXEC-NAME>
 ```
 
