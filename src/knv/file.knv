@@ -1,2 +1,1 @@
-let ran_num466 = 1 + 2;
-x <<= 5;
+let hello: string = 15;

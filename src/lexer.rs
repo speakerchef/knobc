@@ -1,10 +1,16 @@
+use crate::traits::Iter;
 use std::{
+    collections::HashMap,
     error::Error,
+    fmt::Display,
     fs::{self},
+    rc::Rc,
+    usize,
 };
 
-#[derive(Debug)]
-enum Op {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Op {
+    #[default]
     Nop,
     Add,
     Sub,
@@ -41,9 +47,66 @@ enum Op {
     Gte,
 }
 
-#[derive(Debug)]
-enum TokenType {
-    DelimSemi,
+impl From<Token> for Op {
+    fn from(value: Token) -> Self {
+        match value.kind {
+            TokenType::Op(op) => op,
+            _ => Op::Nop,
+        }
+    }
+}
+
+impl Display for Op {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Op::Nop => write!(f, "NOP"),
+            Op::Add => write!(f, "+"),
+            Op::Sub => write!(f, "-"),
+            Op::Mul => write!(f, "*"),
+            Op::Div => write!(f, "/"),
+            Op::Pwr => write!(f, "**"),
+            Op::Mod => write!(f, "%"),
+            Op::Lsl => write!(f, "<<"),
+            Op::Lsr => write!(f, ">>"),
+            Op::BwNot => write!(f, "~"),
+            Op::BwOr => write!(f, "|"),
+            Op::BwAnd => write!(f, "&"),
+            Op::BwXor => write!(f, "^"),
+            Op::LgNot => write!(f, "!"),
+            Op::LgOr => write!(f, "||"),
+            Op::LgAnd => write!(f, "&&"),
+            Op::Asgn => write!(f, "="),
+            Op::AddAsgn => write!(f, "+="),
+            Op::SubAsgn => write!(f, "-="),
+            Op::MulAsgn => write!(f, "*="),
+            Op::DivAsgn => write!(f, "/="),
+            Op::PwrAsgn => write!(f, "**="),
+            Op::ModAsgn => write!(f, "%="),
+            Op::AndAsgn => write!(f, "&="),
+            Op::OrAsgn => write!(f, "|="),
+            Op::XorAsgn => write!(f, "^="),
+            Op::LslAsgn => write!(f, "<<="),
+            Op::LsrAsgn => write!(f, ">>-"),
+            Op::Eq => write!(f, "=="),
+            Op::Neq => write!(f, "!="),
+            Op::Lt => write!(f, "<"),
+            Op::Gt => write!(f, ">"),
+            Op::Lte => write!(f, "<="),
+            Op::Gte => write!(f, ">="),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct Symbol(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TokenType {
+    KwInt,
+    KwFloat,
+    KwChar,
+    KwString,
+    KwBool,
     KwReturn,
     KwFn,
     KwLet,
@@ -54,111 +117,192 @@ enum TokenType {
     KwWhile,
     KwExit,
     Op(Op),
-    DelimLparen,
-    DelimRparen,
-    DelimLcurly,
-    DelimRcurly,
-    DelimLsquare,
-    DelimRsquare,
-    DelimComma,
+    Semi,
+    Colon,
+    Lparen,
+    Rparen,
+    Lcurly,
+    Rcurly,
+    Lsquare,
+    Rsquare,
+    Comma,
     LitInt(i128),
-    VarIdent(String),
+    VarIdent(Symbol),
+
+    #[default]
     Null,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct LocData {
-    line: usize,
-    col: usize,
+impl TokenType {
+    pub fn is_op(&self) -> bool {
+        match *self {
+            TokenType::Op(_) => true,
+            _ => false,
+        }
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
+pub struct SymbolTable {
+    pub map: HashMap<Rc<str>, Symbol>, // for lookup eg. "foo": 24
+    pub symbols: Vec<Rc<str>>,
+}
+
+impl SymbolTable {
+    fn push(&mut self, id: &str) -> Symbol {
+        let rc = Rc::from(id);
+        self.symbols.push(Rc::clone(&rc));
+        let sym = Symbol(self.symbols.len() as u32 - 1); // sym = index
+        self.map.insert(rc, sym);
+        sym
+    }
+
+    pub fn get(&self, sym: Symbol) -> Option<Rc<str>> {
+        if let Some(v) = self.symbols.get(sym.0 as usize) {
+            return Some(Rc::clone(v));
+        }
+        None
+    }
+
+    pub fn contains(&self, sym: Symbol) -> bool {
+        self.symbols.get(sym.0 as usize).is_some()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq)]
+pub struct LocData {
+    pub line: usize,
+    pub col: usize,
+}
+
+impl Display for LocData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.line, self.col)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Token {
-    kind: TokenType,
-    loc: LocData,
+    pub kind: TokenType,
+    pub loc: LocData,
 }
 
 #[derive(Debug)]
 pub struct Lexer {
+    pub sym: SymbolTable,
     tokens: Vec<Token>,
-    pos: usize,
+    tok_ptr: usize,
     line_ct: usize,
     col_ct: usize,
+}
+
+impl Iter for Lexer {
+    type Item = Token;
+
+    fn peek(&self) -> Option<&Self::Item> {
+        self.tokens.get(self.tok_ptr)
+    }
+
+    fn peek_behind(&self) -> Option<&Self::Item> {
+        self.tokens.get(self.tok_ptr - 1)
+    }
+
+    fn next(&mut self) -> Option<&Self::Item> {
+        self.tok_ptr += 1;
+        self.tokens.get(self.tok_ptr)
+    }
 }
 
 impl Lexer {
     pub fn new() -> Lexer {
         Lexer {
             tokens: vec![],
-            pos: 0,
+            sym: SymbolTable {
+                map: HashMap::new(),
+                symbols: Vec::new(),
+            },
+            tok_ptr: 0,
             line_ct: 1,
             col_ct: 1,
         }
     }
 
-    pub fn tokenize(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
-        let f_str = fs::read_to_string(path)?;
-        let mut file_iter = f_str.chars().peekable();
-        println!("File string: \n{}", f_str);
+    pub fn tokenize(&mut self, file: &str) -> Result<(), Box<dyn Error>> {
+        let mut file_it = file.chars().peekable();
         let mut buf = String::new();
 
-        while let Some(ch) = file_iter.next() {
+        while let Some(ch) = file_it.next() {
             self.col_ct += 1;
             let loc = LocData {
                 line: self.line_ct,
                 col: self.col_ct,
             };
+
             match ch {
                 ';' => {
                     if !buf.is_empty() {
-                        self.tokens.push(self.classify_token(&buf, loc)?);
+                        let cls_tok = self.classify_token(&buf, loc)?;
+                        self.tokens.push(cls_tok);
                         buf.clear();
                     }
                     self.tokens.push(Token {
-                        kind: TokenType::DelimSemi,
+                        kind: TokenType::Semi,
+                        loc,
+                    });
+                }
+                ':' => {
+                    if !buf.is_empty() {
+                        let cls_tok = self.classify_token(&buf, loc)?;
+                        self.tokens.push(cls_tok);
+                        buf.clear();
+                    }
+                    self.tokens.push(Token {
+                        kind: TokenType::Colon,
                         loc,
                     });
                 }
                 ' ' => {
                     if !buf.is_empty() {
-                        self.tokens.push(self.classify_token(&buf, loc)?);
+                        let cls_tok = self.classify_token(&buf, loc)?;
+                        self.tokens.push(cls_tok);
                         buf.clear();
                     }
                 }
                 '\n' => {
                     if !buf.is_empty() {
-                        self.tokens.push(self.classify_token(&buf, loc)?);
+                        let cls_tok = self.classify_token(&buf, loc)?;
+                        self.tokens.push(cls_tok);
                         buf.clear();
                     }
                     self.line_ct += 1;
                     self.col_ct = 0;
                 }
-                '_' => buf.push(ch),
                 _ => {
-                    // Existing identifiers
-                    if ch.is_ascii_alphanumeric() {
+                    //  identifiers
+                    if ch.is_ascii_alphanumeric() || ch.eq(&'_') {
                         buf.push(ch);
                     } else {
                         if !buf.is_empty()
                             && buf.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                         {
-                            self.tokens.push(self.classify_token(&buf, loc)?);
+                            let cls_tok = self.classify_token(&buf, loc)?;
+                            self.tokens.push(cls_tok);
                             buf.clear();
                         }
 
                         // Operators
                         buf.push(ch);
-                        if let Some(&doub_op) = file_iter.peek()
+                        if let Some(&doub_op) = file_it.peek()
                             && "+-*/<>=|&^!%".contains(doub_op)
                         {
                             buf.push(doub_op);
-                            file_iter.next();
+                            file_it.next();
                             self.col_ct += 1;
-                            if let Some(&trip_op) = file_iter.peek()
+                            if let Some(&trip_op) = file_it.peek()
                                 && "+-*/<>=|&^!%".contains(trip_op)
                             {
                                 buf.push(trip_op);
-                                file_iter.next();
+                                file_it.next();
                                 self.col_ct += 1;
                             }
                         }
@@ -221,10 +365,28 @@ impl Lexer {
         }
     }
 
-    // pub fn peek(&self, offset: usize) -> Option<&Token> {}
-
-    fn classify_token(&self, tok: &str, loc: LocData) -> Result<Token, Box<dyn Error>> {
+    fn classify_token(&mut self, tok: &str, loc: LocData) -> Result<Token, Box<dyn Error>> {
         match tok {
+            "int" => Ok(Token {
+                kind: TokenType::KwInt,
+                loc,
+            }),
+            "float" => Ok(Token {
+                kind: TokenType::KwFloat,
+                loc,
+            }),
+            "char" => Ok(Token {
+                kind: TokenType::KwChar,
+                loc,
+            }),
+            "bool" => Ok(Token {
+                kind: TokenType::KwBool,
+                loc,
+            }),
+            "string" => Ok(Token {
+                kind: TokenType::KwString,
+                loc,
+            }),
             "exit" => Ok(Token {
                 kind: TokenType::KwExit,
                 loc,
@@ -266,35 +428,35 @@ impl Lexer {
                 loc,
             }),
             ";" => Ok(Token {
-                kind: TokenType::DelimSemi,
+                kind: TokenType::Semi,
                 loc,
             }),
             "(" => Ok(Token {
-                kind: TokenType::DelimLparen,
+                kind: TokenType::Lparen,
                 loc,
             }),
             ")" => Ok(Token {
-                kind: TokenType::DelimRparen,
+                kind: TokenType::Rparen,
                 loc,
             }),
             "{" => Ok(Token {
-                kind: TokenType::DelimLcurly,
+                kind: TokenType::Lcurly,
                 loc,
             }),
             "}" => Ok(Token {
-                kind: TokenType::DelimRcurly,
+                kind: TokenType::Rcurly,
                 loc,
             }),
             "[" => Ok(Token {
-                kind: TokenType::DelimLsquare,
+                kind: TokenType::Lsquare,
                 loc,
             }),
             "]" => Ok(Token {
-                kind: TokenType::DelimRsquare,
+                kind: TokenType::Rsquare,
                 loc,
             }),
             "," => Ok(Token {
-                kind: TokenType::DelimComma,
+                kind: TokenType::Comma,
                 loc,
             }),
             symbol => {
@@ -306,7 +468,7 @@ impl Lexer {
                         });
                     } else {
                         return Ok(Token {
-                            kind: TokenType::VarIdent(String::from(symbol)),
+                            kind: TokenType::VarIdent(self.sym.push(symbol)),
                             loc,
                         });
                     }
