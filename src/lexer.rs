@@ -4,6 +4,7 @@ use std::{
     error::Error,
     fmt::Display,
     fs::{self},
+    panic,
     rc::Rc,
     usize,
 };
@@ -126,11 +127,14 @@ pub enum TokenType {
     Lsquare,
     Rsquare,
     Comma,
-    LitInt(i128),
+    IntLit(i128),
     VarIdent(Symbol),
 
     #[default]
     Null,
+
+    WhiteSpace,
+    NewLine,
 }
 
 impl TokenType {
@@ -138,6 +142,22 @@ impl TokenType {
         match *self {
             TokenType::Op(_) => true,
             _ => false,
+        }
+    }
+
+    pub fn char_to_token(ch: char) -> TokenType {
+        match ch {
+            ' ' => TokenType::WhiteSpace,
+            '\n' => TokenType::NewLine,
+            ';' => TokenType::Semi,
+            ':' => TokenType::Colon,
+            '(' => TokenType::Lparen,
+            ')' => TokenType::Rparen,
+            '{' => TokenType::Lcurly,
+            '}' => TokenType::Rcurly,
+            '[' => TokenType::Lsquare,
+            ']' => TokenType::Rsquare,
+            _ => panic!("Unknown char found: {ch}"),
         }
     }
 }
@@ -226,6 +246,24 @@ impl Lexer {
             col_ct: 1,
         }
     }
+    fn parse_delim(&mut self, kind: TokenType, buf: &mut String) -> Result<(), Box<dyn Error>> {
+        let loc = LocData {
+            line: self.line_ct,
+            col: self.col_ct,
+        };
+        if !buf.is_empty() {
+            let cls_tok = self.classify_token(&buf, loc)?;
+            self.tokens.push(cls_tok);
+            buf.clear();
+        }
+        if kind == TokenType::NewLine {
+            self.line_ct += 1;
+        }
+        if !matches!(kind, TokenType::WhiteSpace | TokenType::NewLine) {
+            self.tokens.push(Token { kind, loc });
+        }
+        Ok(())
+    }
 
     pub fn tokenize(&mut self, file: &str) -> Result<(), Box<dyn Error>> {
         let mut file_it = file.chars().peekable();
@@ -233,59 +271,27 @@ impl Lexer {
 
         while let Some(ch) = file_it.next() {
             self.col_ct += 1;
-            let loc = LocData {
-                line: self.line_ct,
-                col: self.col_ct,
-            };
 
             match ch {
-                ';' => {
-                    if !buf.is_empty() {
-                        let cls_tok = self.classify_token(&buf, loc)?;
-                        self.tokens.push(cls_tok);
-                        buf.clear();
-                    }
-                    self.tokens.push(Token {
-                        kind: TokenType::Semi,
-                        loc,
-                    });
-                }
-                ':' => {
-                    if !buf.is_empty() {
-                        let cls_tok = self.classify_token(&buf, loc)?;
-                        self.tokens.push(cls_tok);
-                        buf.clear();
-                    }
-                    self.tokens.push(Token {
-                        kind: TokenType::Colon,
-                        loc,
-                    });
-                }
-                ' ' => {
-                    if !buf.is_empty() {
-                        let cls_tok = self.classify_token(&buf, loc)?;
-                        self.tokens.push(cls_tok);
-                        buf.clear();
-                    }
-                }
-                '\n' => {
-                    if !buf.is_empty() {
-                        let cls_tok = self.classify_token(&buf, loc)?;
-                        self.tokens.push(cls_tok);
-                        buf.clear();
-                    }
-                    self.line_ct += 1;
-                    self.col_ct = 0;
+                ';' | ':' | ' ' | '\n' | '(' | ')' | '{' | '}' | '[' | ']' | ',' => {
+                    self.parse_delim(TokenType::char_to_token(ch), &mut buf)?
                 }
                 _ => {
-                    //  identifiers
+                    // names and keywords
                     if ch.is_ascii_alphanumeric() || ch.eq(&'_') {
                         buf.push(ch);
                     } else {
+                        // else flush buffer before operator lexing
                         if !buf.is_empty()
                             && buf.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                         {
-                            let cls_tok = self.classify_token(&buf, loc)?;
+                            let cls_tok = self.classify_token(
+                                &buf,
+                                LocData {
+                                    line: self.line_ct,
+                                    col: self.col_ct,
+                                },
+                            )?;
                             self.tokens.push(cls_tok);
                             buf.clear();
                         }
@@ -427,48 +433,22 @@ impl Lexer {
                 kind: TokenType::KwReturn,
                 loc,
             }),
-            ";" => Ok(Token {
-                kind: TokenType::Semi,
-                loc,
-            }),
-            "(" => Ok(Token {
-                kind: TokenType::Lparen,
-                loc,
-            }),
-            ")" => Ok(Token {
-                kind: TokenType::Rparen,
-                loc,
-            }),
-            "{" => Ok(Token {
-                kind: TokenType::Lcurly,
-                loc,
-            }),
-            "}" => Ok(Token {
-                kind: TokenType::Rcurly,
-                loc,
-            }),
-            "[" => Ok(Token {
-                kind: TokenType::Lsquare,
-                loc,
-            }),
-            "]" => Ok(Token {
-                kind: TokenType::Rsquare,
-                loc,
-            }),
-            "," => Ok(Token {
-                kind: TokenType::Comma,
-                loc,
-            }),
             symbol => {
                 if !symbol.is_empty() {
                     if symbol.chars().all(|c| c.is_ascii_digit()) {
                         return Ok(Token {
-                            kind: TokenType::LitInt(symbol.parse::<i128>()?),
+                            kind: TokenType::IntLit(symbol.parse::<i128>()?),
                             loc,
                         });
                     } else {
+                        let sym_id = if let Some(existing_value) = self.sym.map.get(symbol) {
+                            *existing_value
+                        } else {
+                            self.sym.push(symbol)
+                        };
+
                         return Ok(Token {
-                            kind: TokenType::VarIdent(self.sym.push(symbol)),
+                            kind: TokenType::VarIdent(sym_id),
                             loc,
                         });
                     }
