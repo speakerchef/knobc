@@ -66,39 +66,30 @@ impl Type {
             Type::F32 => Some((24, true, true)),
             Type::F64 => Some((53, true, true)),
             _ => {
-                println!("Type: {}", self);
+                println!("Rejected Type at numeric_type_info(): {}", self);
                 None
             }
         }
     }
     pub fn is_digit_convertible_to(&self, to: &Type) -> bool {
-        if self.numeric_type_info().is_none() || to.numeric_type_info().is_none() {
-            return false;
-        }
         if let (Some((from_bits, from_signed, from_is_fp)), Some((to_bits, to_signed, to_is_fp))) =
             (self.numeric_type_info(), to.numeric_type_info())
         {
-            // eg. fit i32 inside i8
-            if from_bits > to_bits {
-                return false;
-            }
-
-            // eg. u32 -> i32 & vice versa
-            if from_signed != to_signed {
-                return false;
-            }
-
+            // eg. fit i32 inside i8 || eg. u32 -> i32 & vice versa
+            if from_bits > to_bits || from_signed != to_signed {
+                false
+            } else if
             // If from-type is integral and to-type is fp,
             // we can coerce int to float iff
-            // int nbits lower than to nbits
+            // int nbits lower than fp mantissa nbits
             // eg. i32 -> f64
-            if !from_is_fp && to_is_fp {
-                return (from_bits < to_bits) && from_signed;
+            !from_is_fp && to_is_fp {
+                // 1.364 -> i32 will truncate.
+                // so we only allow int to float,
+                (from_bits < to_bits) && from_signed
+            } else {
+                true
             }
-
-            // 1.364 -> i32 will truncate.
-            // so we only allow int to float,
-            !from_is_fp && to_is_fp
         } else {
             false
         }
@@ -109,16 +100,16 @@ impl From<TokenType> for Type {
     fn from(value: TokenType) -> Self {
         match value {
             TokenType::Ti8 => Type::I8,
-            TokenType::Ti16 => Type::I16,
-            TokenType::Ti32 => Type::I32,
-            TokenType::Ti64 => Type::I64,
             TokenType::Tu8 => Type::U8,
+            TokenType::Ti16 => Type::I16,
             TokenType::Tu16 => Type::U16,
+            TokenType::Ti32 => Type::I32,
             TokenType::Tu32 => Type::U32,
+            TokenType::Ti64 => Type::I64,
             TokenType::Tu64 => Type::U64,
-            TokenType::Tusize => Type::Usize,
             TokenType::Tf32 => Type::F32,
             TokenType::Tf64 => Type::F64,
+            TokenType::Tusize => Type::Usize,
             TokenType::Tbyte => Type::Byte,
             TokenType::Tchar => Type::Char,
             TokenType::Tstring => Type::String,
@@ -132,16 +123,16 @@ impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
             Type::I8 => write!(f, "i8"),
-            Type::I16 => write!(f, "i16"),
-            Type::I32 => write!(f, "i32"),
-            Type::I64 => write!(f, "i64"),
             Type::U8 => write!(f, "u8"),
+            Type::I16 => write!(f, "i16"),
             Type::U16 => write!(f, "u16"),
+            Type::I32 => write!(f, "i32"),
             Type::U32 => write!(f, "u32"),
+            Type::I64 => write!(f, "i64"),
             Type::U64 => write!(f, "u64"),
-            Type::Usize => write!(f, "usize"),
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
+            Type::Usize => write!(f, "usize"),
             Type::Byte => write!(f, "byte"),
             Type::Char => write!(f, "char"),
             Type::String => write!(f, "string"),

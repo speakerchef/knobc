@@ -32,9 +32,11 @@ impl Compiler {
         println!("Parsing...");
         let mut parser = Parser::new(&mut lex, &mut diagnostics)?;
         let mut program = parser.create_program()?;
+        // let mut symbol_table = std::mem::take(&mut program.sym);
+        let mut symbol_table = program.sym.clone();
 
         // Semantic analysis and type inference + checks
-        Sema::validate_program(&mut program, &mut diagnostics)?;
+        Sema::validate_program(&mut program, &mut diagnostics, &mut symbol_table)?;
         diagnostics.display_diagnostics();
         println!("FINAL STATEMENTS: {:#?}", program.stmts);
         Ok(())

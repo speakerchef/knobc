@@ -1,8 +1,9 @@
 use crate::{
     ast::{self, UnionNode},
     diagnostics::DiagHandler,
+    lexer::{self, SymbolTable},
 };
-use std::{error::Error, rc::Rc};
+use std::{collections::HashMap, error::Error, rc::Rc};
 
 pub struct Sema;
 impl Sema {
@@ -37,18 +38,34 @@ impl Sema {
         }
     }
 
-    fn visit_expr(expr: &ast::Expr, diag: &mut DiagHandler) {
+    fn visit_expr(
+        expr: &ast::Expr,
+        diag: &mut DiagHandler,
+        sym: &mut SymbolTable,
+        vars: &mut HashMap<lexer::Symbol, ast::Type>,
+    ) {
         if let Some(lhs) = &expr.lhs {
-            Sema::visit_expr(lhs, diag);
+            Sema::visit_expr(lhs, diag, sym, vars);
         }
         if let Some(rhs) = &expr.rhs {
-            Sema::visit_expr(rhs, diag);
+            Sema::visit_expr(rhs, diag, sym, vars);
         }
         match expr.atom {
-            //TODO: Resolve type from ident symbol
-            ast::AtomKind::Ident(sym) => {
-                let extracted_type = ast::Type::default();
-                expr.ty.set(Some(extracted_type));
+            ast::AtomKind::Ident(id) => {
+                if sym.contains(id.name)
+                    && let Some(&stored_type) = vars.get(&id.name)
+                {
+                    expr.ty.set(Some(stored_type));
+                } else {
+                    diag.push_err(
+                        id.loc,
+                        &format!(
+                            "could not resolve symbol or type for `{}`",
+                            sym.get(id.name).unwrap()
+                        ),
+                    );
+                    expr.ty.set(None);
+                }
             }
             ast::AtomKind::IntLit(lit) => {
                 expr.ty
@@ -89,8 +106,13 @@ impl Sema {
         }
     }
 
-    fn visit_decl(decl: &ast::VarDecl, diag: &mut DiagHandler) {
-        Sema::visit_expr(decl.value.as_ref(), diag);
+    fn visit_decl(
+        decl: &ast::VarDecl,
+        diag: &mut DiagHandler,
+        sym: &mut SymbolTable,
+        vars: &mut HashMap<lexer::Symbol, ast::Type>,
+    ) {
+        Sema::visit_expr(decl.value.as_ref(), diag, sym, vars);
         if decl.value.ty.get().is_none() {
             diag.push_err(decl.loc, "could not resolve type for variable declaration");
         } else {
@@ -101,9 +123,11 @@ impl Sema {
             && declared_type != inferred_type
         {
             if inferred_type.is_digit_convertible_to(&declared_type) {
+                decl.value.ty.set(Some(declared_type));
+            } else {
                 diag.push_err(
                     decl.id.loc,
-                    &format!("expected {} and got {}", inferred_type, declared_type),
+                    &format!("expected {} and got {}", declared_type, inferred_type),
                 );
                 diag.push_note(
                     decl.id.loc,
@@ -112,38 +136,43 @@ impl Sema {
                         declared_type, inferred_type
                     ),
                 );
-            } else {
-                decl.value.ty.set(Some(declared_type));
             }
         }
         decl.ty.set(decl.value.ty.get());
+        vars.insert(decl.id.name, decl.ty.get().unwrap());
     }
 
-    fn visit_stmt_exit(enode: &ast::StmtExit, diag: &mut DiagHandler) {
+    fn visit_stmt_exit(
+        enode: &ast::StmtExit,
+        diag: &mut DiagHandler,
+        sym: &mut SymbolTable,
+        vars: &mut HashMap<lexer::Symbol, ast::Type>,
+    ) {
         if let Some(exit_code) = enode.exit_code.as_ref() {
-            Sema::visit_expr(exit_code, diag);
+            Sema::visit_expr(exit_code, diag, sym, vars);
         }
     }
 
     pub fn validate_program(
         prog: &mut ast::Program,
         diag: &mut DiagHandler,
+        sym: &mut SymbolTable,
     ) -> Result<(), Box<dyn Error>> {
         // dbg!("AST: {:#?}", &prog);
         // print!("Diagnostics at validate_program()");
         // diag.display_diagnostics();
-
+        let vars: &mut HashMap<lexer::Symbol, ast::Type> = &mut HashMap::new();
         for stmt in &prog.stmts {
-            match stmt.clone() {
+            match stmt {
                 UnionNode::VarDecl(decl) => {
-                    let rc = &mut Rc::clone(&decl);
-                    Sema::visit_decl(rc, diag);
+                    let rc = &mut Rc::clone(decl);
+                    Sema::visit_decl(rc, diag, sym, vars);
                 }
-                UnionNode::Expr(mut expr) => {
-                    Sema::visit_expr(expr.as_mut(), diag);
+                UnionNode::Expr(expr) => {
+                    Sema::visit_expr(expr.as_ref(), diag, sym, vars);
                 }
                 UnionNode::StmtExit(enode) => {
-                    Sema::visit_stmt_exit(&enode, diag);
+                    Sema::visit_stmt_exit(enode, diag, sym, vars);
                 }
                 _ => todo!("Semantic analysis for this nodetype is not implemented"),
             }

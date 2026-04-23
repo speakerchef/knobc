@@ -88,7 +88,7 @@ impl Parser<'_> {
             };
             self.lex.next(); // eat ident
 
-            // Check for delcared type
+            // Check for declared type
             if let Some(&colon) = self.lex.peek()
                 && matches!(colon.kind, TokenType::Colon)
             {
@@ -114,7 +114,7 @@ impl Parser<'_> {
                 ) {
                     self.diagnostics.push_err(
                         tytok.loc,
-                        &format!("expected type specifier; got {}", tytok.kind),
+                        &format!("expected valid type specifier; got {} instead", tytok.kind),
                     );
                 } else {
                     decl.decl_type = Some(Type::from(tytok.kind));
@@ -326,6 +326,7 @@ impl Parser<'_> {
                     };
                     let sym = decl.id.name;
                     let rc = Rc::new(decl);
+
                     loc_scp.vars.insert(sym, Rc::clone(&rc));
                     self.program.stmts.push(ast::UnionNode::VarDecl(rc));
                 }

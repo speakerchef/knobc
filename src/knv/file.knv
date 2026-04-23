@@ -1,2 +1,3 @@
-let hello: int = ((6 - 4) * 9 | 420);
-exit hello;
+let hello: i64 = ((6 - 4) * 9 | 420);
+let foo = hello;
+exit foo;
