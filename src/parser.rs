@@ -364,7 +364,6 @@ impl Parser<'_> {
                     }
                 }
                 TokenType::Semi => {
-                    println!("SEMI");
                     self.lex.next();
                     continue;
                 }

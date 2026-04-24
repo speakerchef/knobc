@@ -1,3 +1,2 @@
-let some = 43;
-let hello: i64 = ((some - 4) * 9 | 420);
-let foo = hello;
+let some: i8 = 34 + 35;
+exit some;

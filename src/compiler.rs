@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fs;
 
 use crate::diagnostics::DiagHandler;
+use crate::irgenerator::IrGenerator;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::semantics::Sema;
@@ -32,13 +33,20 @@ impl Compiler {
         println!("Parsing...");
         let mut parser = Parser::new(&mut lex, &mut diagnostics)?;
         let mut program = parser.create_program()?;
-        // let mut symbol_table = std::mem::take(&mut program.sym);
-        let mut symbol_table = program.sym.clone();
+        let mut symbol_table = std::mem::take(&mut program.sym);
 
         // Semantic analysis and type inference + checks
         Sema::validate_program(&mut program, &mut diagnostics, &mut symbol_table)?;
+        println!("Post Sema Diagnostics:");
         diagnostics.display_diagnostics();
-        println!("FINAL STATEMENTS: {:#?}", program.stmts);
+        program.sym = symbol_table;
+        // println!("FINAL STATEMENTS: {:#?}", program.stmts);
+
+        // KLIR Generation
+        let mut generator = IrGenerator::new(&mut program, &mut diagnostics);
+        generator.emit_klir()?;
+
+        println!("Compilation Complete");
         Ok(())
     }
 }

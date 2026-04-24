@@ -1,3 +1,4 @@
 let i: i32 = 200000000;
 let j: i32 = 200000000;
+let hello: i64 = ((some - 4) * 9 | 420);
 let k: i64 = i + j;

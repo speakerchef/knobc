@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{ lexer::LocData};
+use crate::lexer::LocData;
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug)]
@@ -14,7 +14,6 @@ const RED: &str = "\x1b[1;93m";
 const YELLOW: &str = "\x1b[0;91m";
 const PURPLE: &str = "\x1b[1;95m";
 const RESET: &str = "\x1b[0m";
-
 
 impl Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -78,7 +77,6 @@ impl DiagHandler {
     }
 
     pub fn display_diagnostics(&self) {
-        println!("Len of diags: {}", self.diagnostics.len());
         for diag in &self.diagnostics {
             match diag.severity {
                 Severity::Err => eprintln!("{}", diag),

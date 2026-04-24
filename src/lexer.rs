@@ -1,6 +1,5 @@
 use crate::traits::Iter;
-use core::f64;
-use std::{collections::HashMap, error::Error, fmt::Display, panic, rc::Rc, usize};
+use std::{collections::HashMap, error::Error, fmt::Display, panic, rc::Rc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Op {
@@ -93,6 +92,12 @@ impl Display for Op {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct Symbol(pub u32);
+
+impl Display for Symbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TokenType {
@@ -271,8 +276,8 @@ impl Iter for Lexer {
     }
 }
 
-impl Lexer {
-    pub fn new() -> Lexer {
+impl Default for Lexer {
+    fn default() -> Self {
         Lexer {
             tokens: vec![],
             sym: SymbolTable {
@@ -284,13 +289,19 @@ impl Lexer {
             col_ct: 1,
         }
     }
+}
+
+impl Lexer {
+    pub fn new() -> Lexer {
+        Self::default()
+    }
     fn parse_delim(&mut self, kind: TokenType, buf: &mut String) -> Result<(), Box<dyn Error>> {
         let loc = LocData {
             line: self.line_ct,
             col: self.col_ct,
         };
         if !buf.is_empty() {
-            let cls_tok = self.classify_token(&buf, loc)?;
+            let cls_tok = self.classify_token(buf, loc)?;
             self.tokens.push(cls_tok);
             buf.clear();
         }

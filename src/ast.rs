@@ -162,6 +162,16 @@ pub enum AtomKind {
     IntLit(IntLit),
 }
 
+impl Display for AtomKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AtomKind::Ident(id) => write!(f, "%{}", id.name),
+            AtomKind::IntLit(value) => write!(f, "{}", value.val),
+            AtomKind::None => write!(f, "None"),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Expr {
     pub atom: AtomKind,
