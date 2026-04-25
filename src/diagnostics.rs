@@ -53,7 +53,7 @@ impl DiagHandler {
     pub fn has_errors(&self) -> bool {
         self.diagnostics
             .iter()
-            .all(|diag| !matches!(diag.severity, Severity::Err))
+            .any(|diag| matches!(diag.severity, Severity::Err))
     }
 
     pub fn push_err(&mut self, loc: LocData, msg: &str) {

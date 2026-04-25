@@ -1,3 +1,3 @@
-let a = 17 + 17;
-let some = a + 35;
-exit some;
+mut a = 17 + 17;
+a = 42;
+exit a;

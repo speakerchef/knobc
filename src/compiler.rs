@@ -39,8 +39,9 @@ impl Compiler {
 
         // Semantic analysis and type inference + checks
         println!("Semantic Analysis & Type Checking...");
-        Sema::validate_program(&mut program, &mut diagnostics, &mut symbol_table)?;
-        println!("AST: \n{:#?}", program.stmts);
+        let mut sema = Sema::new(&mut program, &mut diagnostics, &mut symbol_table);
+        sema.validate_program()?;
+        // println!("AST: \n{:#?}", program.stmts);
         if diagnostics.has_errors() {
             diagnostics.display_diagnostics();
         }

@@ -8,8 +8,8 @@ use crate::{
 };
 
 pub struct Parser<'a> {
-    program: ast::Program,
-    diagnostics: &'a mut DiagHandler,
+    prog: ast::Program,
+    diag: &'a mut DiagHandler,
     lex: &'a mut Lexer,
 }
 
@@ -19,8 +19,8 @@ impl Parser<'_> {
         diagnostics: &'a mut DiagHandler,
     ) -> Result<Parser<'a>, Box<dyn Error>> {
         Ok(Parser {
-            program: ast::Program::default(),
-            diagnostics,
+            prog: ast::Program::default(),
+            diag: diagnostics,
             lex,
         })
     }
@@ -76,7 +76,7 @@ impl Parser<'_> {
         // Get identifier
         if let Some(&idtok) = self.lex.peek() {
             let TokenType::VarIdent(sym) = idtok.kind else {
-                self.diagnostics.push_err(
+                self.diag.push_err(
                     idtok.loc,
                     &format!("expected identifier; got `{:?}`", idtok.kind),
                 );
@@ -112,7 +112,7 @@ impl Parser<'_> {
                         | TokenType::Tstring
                         | TokenType::Tbool
                 ) {
-                    self.diagnostics.push_err(
+                    self.diag.push_err(
                         tytok.loc,
                         &format!("expected valid type specifier; got {} instead", tytok.kind),
                     );
@@ -122,7 +122,7 @@ impl Parser<'_> {
                 self.lex.next(); // eat typename
             }
             if !self.validate_tok(TokenType::Op(Op::Asgn)) {
-                self.diagnostics
+                self.diag
                     .push_err(t.loc, "expected `=` after variable declaration");
             }
             self.lex.next(); // eat '='
@@ -131,13 +131,13 @@ impl Parser<'_> {
                 self.check_semi(self.lex.peek_behind().unwrap().loc);
                 expr
             } else {
-                self.diagnostics
+                self.diag
                     .push_err(idtok.loc, "expected variable declaration");
                 return None;
             });
             Some(decl)
         } else {
-            self.diagnostics.push_err(
+            self.diag.push_err(
                 t.loc,
                 &format!(
                     "expected identifier after variable declaration `{}`",
@@ -158,7 +158,7 @@ impl Parser<'_> {
             self.lex.next(); // eat '('
             lhs = self.parse_expr(0.);
             if !self.validate_tok(TokenType::Rparen) {
-                self.diagnostics.push_err(
+                self.diag.push_err(
                     self.lex.peek().unwrap_or(&Token::default()).loc,
                     "expected closing `)`",
                 );
@@ -180,7 +180,7 @@ impl Parser<'_> {
             }
         } else {
             let prev_token = self.lex.peek_behind().unwrap();
-            self.diagnostics.push_err(
+            self.diag.push_err(
                 prev_token.loc,
                 &format!("expected expression after `{:?}`", prev_token),
             );
@@ -225,7 +225,7 @@ impl Parser<'_> {
                 },
                 _ => {
                     //TODO: Make this a sema analysis error
-                    self.diagnostics.push_err(
+                    self.diag.push_err(
                         operand.loc,
                         &format!("invalid operand of type `{:?}` in expression", operand.kind),
                     );
@@ -233,7 +233,7 @@ impl Parser<'_> {
                 }
             }
         } else {
-            self.diagnostics.push_err(
+            self.diag.push_err(
                 self.lex.peek_behind().unwrap().loc,
                 "expected operands to expression",
             );
@@ -262,7 +262,7 @@ impl Parser<'_> {
                 };
                 lhs = Some(aggregate_node);
             } else {
-                self.diagnostics.push_err(
+                self.diag.push_err(
                     tok.loc,
                     &format!("expected rhs operand in binary expression after `{}`", op),
                 );
@@ -283,9 +283,9 @@ impl Parser<'_> {
             .kind
         {
             TokenType::Semi => return,
-            TokenType::Rparen => self.diagnostics.push_err(loc, "extraneous closing `)`"),
-            TokenType::Rcurly => self.diagnostics.push_err(loc, "extraneous closing `}`"),
-            _ => self.diagnostics.push_err(loc, "expected `;`"),
+            TokenType::Rparen => self.diag.push_err(loc, "extraneous closing `)`"),
+            TokenType::Rcurly => self.diag.push_err(loc, "extraneous closing `}`"),
+            _ => self.diag.push_err(loc, "expected `;`"),
         }
     }
 
@@ -295,7 +295,7 @@ impl Parser<'_> {
         self.check_semi(loc);
         ast::StmtExit {
             exit_code: Box::new(expr.unwrap_or_else(|| {
-                self.diagnostics
+                self.diag
                     .push_err(loc, "could not parse expression after `exit`");
                 ast::Expr::default()
             })),
@@ -317,63 +317,42 @@ impl Parser<'_> {
                 TokenType::KwExit => {
                     self.lex.next(); // eat 'exit'
                     let enode = self.parse_stmt_exit();
-                    self.program.stmts.push(ast::UnionNode::StmtExit(enode));
+                    self.prog.stmts.push(ast::UnionNode::StmtExit(enode));
                 }
                 TokenType::KwLet | TokenType::KwMut => {
                     self.lex.next(); // eat 'let' | 'mut'
                     let decl: ast::VarDecl = if let Some(decl_res) = self.parse_var_decl(tok) {
                         decl_res
                     } else {
-                        self.diagnostics
-                            .push_err(tok.loc, "expected variable declaration");
+                        self.diag.push_err(tok.loc, "expected variable declaration");
                         ast::VarDecl::default()
                     };
                     let sym = decl.id.name;
                     let rc = Rc::new(decl);
 
                     loc_scp.vars.insert(sym, Rc::clone(&rc));
-                    self.program.stmts.push(ast::UnionNode::VarDecl(rc));
+                    self.prog.stmts.push(ast::UnionNode::VarDecl(rc));
                 }
                 TokenType::VarIdent(sym) => {
                     if !loc_scp.vars.contains_key(&sym) && !loc_scp.fns.contains_key(&sym) {
-                        self.diagnostics.push_err(
+                        self.diag.push_err(
                             tok.loc,
                             &format!("undeclared identifier `{}`", self.lex.sym.get(sym).unwrap()),
                         );
                     }
 
-                    if loc_scp.vars.contains_key(&sym) {
-                        if !matches!(loc_scp.vars.get(&sym).unwrap().kind, VarType::Let) {
-                            self.diagnostics.push_err(
-                                tok.loc,
-                                &format!(
-                                    "cannot mutate immutable variable {} declared with `let`",
-                                    self.lex.sym.get(sym).unwrap()
-                                ),
-                            );
-                            self.diagnostics.push_note(
-                                tok.loc,
-                                &format!(
-                                    "did you mean to use `mut` when declaring `{}`?",
-                                    self.lex.sym.get(sym).unwrap()
-                                ),
-                            );
-                            break;
-                        }
-                        let decl = self.parse_var_decl(tok).unwrap();
-                        let sym = decl.id.name;
-                        let rc = Rc::new(decl);
-                        loc_scp.vars.insert(sym, Rc::clone(&rc));
-                        self.program.stmts.push(ast::UnionNode::VarDecl(rc));
-                    }
+                    let decl = self.parse_var_decl(tok).unwrap();
+                    let sym = decl.id.name;
+                    let rc = Rc::new(decl);
+                    loc_scp.vars.insert(sym, Rc::clone(&rc));
+                    self.prog.stmts.push(ast::UnionNode::VarDecl(rc));
                 }
                 TokenType::Semi => {
                     self.lex.next();
                     continue;
                 }
                 _ => {
-                    // println!("Symbols: {:?}", self.lex.sym.symbols);
-                    println!("Stmts: {:#?}", self.program.stmts);
+                    println!("Stmts: {:#?}", self.prog.stmts);
                     eprintln!("Unhandled Type");
                     self.lex.next();
                 }
@@ -385,7 +364,7 @@ impl Parser<'_> {
         self.parse_stmt(&mut ast::Scope::default())?;
         Ok(ast::Program {
             sym: self.lex.sym.clone(),
-            stmts: self.program.stmts.clone(),
+            stmts: self.prog.stmts.clone(),
         })
     }
 }

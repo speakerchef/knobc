@@ -3,3 +3,5 @@
 sandbox/
 .idea/
 .zed/
+*.s
+out

@@ -1,46 +1,65 @@
 use crate::{
     ast::{self, UnionNode},
     diagnostics::DiagHandler,
-    lexer::{self, SymbolTable},
+    lexer::{self},
 };
 use core::panic;
 use std::{collections::HashMap, error::Error, rc::Rc};
 
-pub struct Sema;
-impl Sema {
-    fn default_integer_resolution(
-        val: i128,
-        diag: &mut DiagHandler,
-        loc: crate::lexer::LocData,
-    ) -> Option<ast::Type> {
-        if i32::try_from(val).is_ok() {
-            Some(ast::Type::I32)
-        } else if i64::try_from(val).is_ok() {
-            Some(ast::Type::I64)
-        } else {
-            println!("Type did not resolve");
-            diag.push_err(
-                loc,
-                &format!(
-                    "integer literal `{}` exceeds the range of default type i64",
-                    val
-                ),
-            );
-            if u64::try_from(val).is_ok() {
-                diag.push_note(
-                    loc,
-                    "consider annotating the type at declaration `let digit: u64 = ...`",
-                );
-            } else {
-                diag.push_warn(loc,
-                    &format!("use of excessively large integer literal `{}`; consider using a smaller value", val));
-            }
-            None
+pub struct Sema<'a> {
+    prog: &'a mut ast::Program,
+    diag: &'a mut DiagHandler,
+    sym: &'a mut lexer::SymbolTable,
+    cached_ty: HashMap<lexer::Symbol, ast::Type>,
+    vars: HashMap<lexer::Symbol, ast::VarType>,
+}
+impl Sema<'_> {
+    pub fn new<'a>(
+        prog: &'a mut ast::Program,
+        diag: &'a mut DiagHandler,
+        sym: &'a mut lexer::SymbolTable,
+    ) -> Sema<'a> {
+        Sema {
+            prog,
+            diag,
+            sym,
+            cached_ty: HashMap::new(),
+            vars: HashMap::new(),
         }
     }
+    // fn default_integer_resolution(
+    //     val: i128,
+    //     diag: &mut DiagHandler,
+    //     loc: crate::lexer::LocData,
+    // ) -> Option<ast::Type> {
+    //     if i32::try_from(val).is_ok() {
+    //         Some(ast::Type::I32)
+    //     } else if i64::try_from(val).is_ok() {
+    //         Some(ast::Type::I64)
+    //     } else {
+    //         println!("Type did not resolve");
+    //         diag.push_err(
+    //             loc,
+    //             &format!(
+    //                 "integer literal `{}` exceeds the range of default type i64",
+    //                 val
+    //             ),
+    //         );
+    //         if u64::try_from(val).is_ok() {
+    //             diag.push_note(
+    //                 loc,
+    //                 "consider annotating the type at declaration `let digit: u64 = ...`",
+    //             );
+    //         } else {
+    //             diag.push_warn(loc,
+    //                 &format!("use of excessively large integer literal `{}`; consider using a smaller value", val));
+    //         }
+    //         None
+    //     }
+    // }
     fn resolve_integer_resolution(
+        &mut self,
         val: i128,
-        diag: &mut DiagHandler,
         loc: crate::lexer::LocData,
     ) -> Option<ast::Type> {
         match val {
@@ -54,7 +73,7 @@ impl Sema {
             _ if u64::try_from(val).is_ok() => Some(ast::Type::U64),
             _ => {
                 println!("Type did not resolve");
-                diag.push_err(
+                self.diag.push_err(
                     loc,
                     &format!(
                         "integer literal `{}` exceeds the range of default type i64",
@@ -62,12 +81,12 @@ impl Sema {
                     ),
                 );
                 if u64::try_from(val).is_ok() {
-                    diag.push_note(
+                    self.diag.push_note(
                         loc,
                         "consider annotating the type at declaration `let digit: u64 = ...`",
                     );
                 } else {
-                    diag.push_warn(loc,
+                    self.diag.push_warn(loc,
                     &format!("use of excessively large integer literal `{}`; consider using a smaller value", val));
                 }
                 None
@@ -75,40 +94,33 @@ impl Sema {
         }
     }
 
-    fn set_all_types_expr(expr: &ast::Expr, ty: ast::Type) {
+    fn set_all_types_expr(&mut self, expr: &ast::Expr, ty: ast::Type) {
         if let Some(lhs) = &expr.lhs {
-            Sema::set_all_types_expr(lhs, ty);
+            self.set_all_types_expr(lhs, ty);
         }
         if let Some(rhs) = &expr.rhs {
-            Sema::set_all_types_expr(rhs, ty);
+            self.set_all_types_expr(rhs, ty);
         }
         expr.ty.set(Some(ty));
     }
 
-    fn visit_expr(
-        expr: &ast::Expr,
-        diag: &mut DiagHandler,
-        sym: &mut SymbolTable,
-        vars: &mut HashMap<lexer::Symbol, ast::Type>,
-    ) {
+    fn visit_expr(&mut self, expr: &ast::Expr) {
         if let Some(lhs) = &expr.lhs {
-            Sema::visit_expr(lhs, diag, sym, vars);
+            self.visit_expr(lhs);
         }
         if let Some(rhs) = &expr.rhs {
-            Sema::visit_expr(rhs, diag, sym, vars);
+            self.visit_expr(rhs);
         }
         match expr.atom {
             ast::AtomKind::Ident(id) => {
-                if sym.contains(id.name)
-                    && let Some(&stored_type) = vars.get(&id.name)
-                {
-                    expr.ty.set(Some(stored_type));
+                if let Some(&cached_ty) = self.cached_ty.get(&id.name) {
+                    expr.ty.set(Some(cached_ty));
                 } else {
-                    diag.push_err(
+                    self.diag.push_err(
                         id.loc,
                         &format!(
                             "could not resolve symbol or type for `{}`",
-                            sym.get(id.name).unwrap()
+                            self.sym.get(id.name).unwrap()
                         ),
                     );
                     expr.ty.set(None);
@@ -116,7 +128,7 @@ impl Sema {
             }
             ast::AtomKind::IntLit(lit) => {
                 expr.ty
-                    .set(Sema::resolve_integer_resolution(lit.val, diag, lit.loc));
+                    .set(self.resolve_integer_resolution(lit.val, lit.loc));
             }
             ast::AtomKind::None => {
                 expr.ty
@@ -133,7 +145,7 @@ impl Sema {
                             && !rty.is_digit_convertible_to(&lty)
                         {
                             type_to_return = ast::Type::default();
-                            diag.push_err(
+                            self.diag.push_err(
                                 lhs.loc,
                                 &format!(
                                     "incompatible types found in expression `{}` & `{}`",
@@ -152,15 +164,11 @@ impl Sema {
             }
         }
     }
-    fn visit_decl(
-        decl: &ast::VarDecl,
-        diag: &mut DiagHandler,
-        sym: &mut SymbolTable,
-        vars: &mut HashMap<lexer::Symbol, ast::Type>,
-    ) {
-        Sema::visit_expr(decl.value.as_ref(), diag, sym, vars);
+    fn visit_decl(&mut self, decl: &ast::VarDecl) {
+        self.visit_expr(decl.value.as_ref());
         if decl.value.ty.get().is_none() {
-            diag.push_err(decl.loc, "could not resolve type for variable declaration");
+            self.diag
+                .push_err(decl.loc, "could not resolve type for variable declaration");
         } else {
             // Set declaration type to inner expression type
             decl.ty.set(decl.value.ty.get());
@@ -171,11 +179,11 @@ impl Sema {
             if inferred_type.is_digit_convertible_to(&declared_type) {
                 decl.value.ty.set(Some(declared_type));
             } else {
-                diag.push_err(
+                self.diag.push_err(
                     decl.id.loc,
                     &format!("expected {} and got {}", declared_type, inferred_type),
                 );
-                diag.push_note(
+                self.diag.push_note(
                     decl.id.loc,
                     &format!(
                         "consider changing `{}` to `{}`",
@@ -194,43 +202,46 @@ impl Sema {
                 panic!("Could not set default type");
             }
         }
-        Sema::set_all_types_expr(decl.value.as_ref(), decl.ty.get().unwrap());
-        vars.insert(decl.id.name, decl.ty.get().unwrap());
+        self.set_all_types_expr(decl.value.as_ref(), decl.ty.get().unwrap());
+        self.vars.insert(decl.id.name, decl.kind);
+        self.cached_ty.insert(decl.id.name, decl.ty.get().unwrap());
     }
 
-    fn visit_stmt_exit(
-        enode: &ast::StmtExit,
-        diag: &mut DiagHandler,
-        sym: &mut SymbolTable,
-        vars: &mut HashMap<lexer::Symbol, ast::Type>,
-    ) {
-        Sema::visit_expr(&enode.exit_code, diag, sym, vars);
+    fn visit_stmt_exit(&mut self, enode: &ast::StmtExit) {
+        self.visit_expr(&enode.exit_code);
     }
 
-    pub fn validate_program(
-        prog: &mut ast::Program,
-        diag: &mut DiagHandler,
-        sym: &mut SymbolTable,
-    ) -> Result<(), Box<dyn Error>> {
-        // dbg!("AST: {:#?}", &prog);
-        // print!("Diagnostics at validate_program()");
-        // diag.display_diagnostics();
-        let vars: &mut HashMap<lexer::Symbol, ast::Type> = &mut HashMap::new();
-        for stmt in &prog.stmts {
+    pub fn validate_program(&mut self) -> Result<(), Box<dyn Error>> {
+        let stmts = std::mem::take(&mut self.prog.stmts);
+        for stmt in &stmts {
             match stmt {
                 UnionNode::VarDecl(decl) => {
                     let rc = &mut Rc::clone(decl);
-                    Sema::visit_decl(rc, diag, sym, vars);
+                    if let Some(existing_decl_kind) = self.vars.get(&decl.id.name)
+                        && matches!(existing_decl_kind, ast::VarType::Let)
+                    {
+                        self.diag.push_err(
+                            decl.id.loc,
+                            &format!(
+                                "cannot re-assign `{}` declared with `let`",
+                                self.sym.get(decl.id.name).unwrap()
+                            ),
+                        );
+                        self.diag
+                            .push_note(decl.id.loc, "consider using `mut` instead");
+                    }
+                    self.visit_decl(rc);
                 }
                 UnionNode::Expr(expr) => {
-                    Sema::visit_expr(expr.as_ref(), diag, sym, vars);
+                    self.visit_expr(expr.as_ref());
                 }
                 UnionNode::StmtExit(enode) => {
-                    Sema::visit_stmt_exit(enode, diag, sym, vars);
+                    self.visit_stmt_exit(enode);
                 }
                 _ => todo!("Semantic analysis for this nodetype is not implemented"),
             }
         }
+        self.prog.stmts = stmts;
         Ok(())
     }
 }
