@@ -1,17 +1,16 @@
-# KLC/knobc: Knob-Lang-Compiler
->(This is a Rust Re-write of the original; [Original C++ Version](https://github.com/speakerchef/klc-compiler))
+# Knobc: Knob-Compiler
+>(This is a Rust re-design & re-write of my original; [Original C++ Version](https://github.com/speakerchef/klc-compiler))
 >Re-write also includes and will include a great deal of architectural changes both internally and language-definition wise.
 
-KLC is a compiler for the **KNOB** (**K**ompiled **NOB**) language —
-`Knob` is a statically typed, AOT-compiled language I'm creating that emits a custom defined IR (Intermediate Representation), emitting assembly for a few backends: Namely AArch64 & x86_64(eventually):
+- Knobc is a compiler for the **KNOB** (**K**ompiled **NOB**) programming language —
+`Knob` is a statically typed, AOT-compiled language I'm creating that emits a custom defined IR (Intermediate Representation) called `klir` - emitting assembly for a few backends: Namely AArch64 (Apple Silicon & Linux) & x86_64(eventually):
+- As of now, only Apple Silicon Arm64 assembly is emitted. Linux Arm64 will be implemented as the compiler matures.
 > [!NOTE] The original C++ version of the compiler emitted raw AArch64 assembly. The new re-write with an MIR level will allow for optimization passes, multiple backends, and other cool stuff!
 
 Uses `.knv` as the file extension.
 > *Why `.knv` and not `.knb`?*
 > Everyone knows the true perfect language prioritizes ergonomics over sensible standards. `v` is easier to hit from the home row than `b`. You're welcome.
-
 ---
-
 ## Architecture
 
 ```
@@ -24,11 +23,8 @@ Source → Lexer → Parser → AST → Type-Checking / Semantic Analysis → Ty
 - Typed-AST is walked and Knob-MIR is emitted for each node/operation/etc...
 - Optimization (Later scope): Will analyze the IR for patterns to exploit and optimize
 - **Codegen** — Currently targeting only AArch64 (Apple Silicon / macOS Darwin ABI). (x86_64 support in the future). No LLVM or other backends/deps.
-
 ---
-
 ## Language features
-
 >KNOB is a fun project of mine still under active construction.
 
 ### Types (so far)
@@ -72,7 +68,6 @@ Source → Lexer → Parser → AST → Type-Checking / Semantic Analysis → Ty
 >[!WARNING] The below is stale from the original C++ codebase - will update as things move
 
 ### Other Features
-
 - Parenthesized expressions with correct grouping: `(a + b) * (c - d)`
 - Scoping with nested blocks and proper variable resolution
 - Variables from outer scopes are visible in inner scopes
@@ -179,20 +174,23 @@ exit hash & 255;
 ```
 
 ---
-
 ## Build & Generate Executable
 
 > **Requires:** Cargo, Clang/GCC for linker, AArch64 target (Apple Silicon Mac)
 
 ```bash
-# Run
-cargo run <FILE.knv> <EXEC-NAME>
+# Build the compiler
+cmake -S . -B build/
+cd build
+cmake --build .
 
-# Optional: Build and alias
-cargo build
-cd target/debug
-alias klc="path/to/klc"
-# Run
+# Optional: Alias to use `klc` anywhere on your system
+alias klc='path/to/klc/build/klc'
+
+# Generate assembly and executable (MacOS Only for now)
+./klc <FILE.knv> <EXEC-NAME> 
+
+# Or if aliased:
 klc <FILE.knv> <EXEC-NAME>
 ```
 
@@ -213,7 +211,7 @@ echo $?
 ## Roadmap
 
 - [ ] String literals
-- [x] Functions
+- [ ] Functions
 - [ ] Floating point support (Harder than you think)
 - [ ] Standard library functions like print()
 - [ ] Loop optimizations

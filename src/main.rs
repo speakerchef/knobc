@@ -21,9 +21,3 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
     Ok(())
 }
-
-// fn compile(path: &str, exec_name: &str) -> Result<(), Box<dyn Error>> {
-//     let mut parser = Parser::new(path)?;
-//     let program = parser.create_program();
-//     Ok(())
-// }
