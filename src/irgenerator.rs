@@ -1,5 +1,5 @@
 use core::panic;
-use std::{error::Error, fmt::Display, hint::unreachable_unchecked, rc::Rc};
+use std::{error::Error, fmt::Display, rc::Rc};
 
 use crate::{
     ast::{self, UnionNode},
@@ -143,6 +143,9 @@ impl Dump for Expr {
             lexer::Op::BwOr => "or",
             lexer::Op::BwXor => "xor",
             lexer::Op::BwNot => "not",
+            lexer::Op::LgAnd => "lgand",
+            lexer::Op::LgOr => "lgor",
+            lexer::Op::LgNot => "lgnot",
             lexer::Op::Lt => "lt",
             lexer::Op::Gt => "gt",
             lexer::Op::Lte => "lte",

@@ -66,30 +66,39 @@ impl CodeGenerator {
             lexer::Op::Lsl => self.asm.push_str("    lsl     x8, x9, x10\n"),
             lexer::Op::Lsr => self.asm.push_str("    lsr     x8, x9, x10\n"),
             lexer::Op::Asr => self.asm.push_str("    asr     x8, x9, x10\n"),
-            lexer::Op::Div => match ty {
-                ast::Type::I8
-                | ast::Type::I16
-                | ast::Type::I32
-                | ast::Type::I64
-                | ast::Type::Usize => {
-                    self.asm.push_str("    sdiv    x8, x8, x9\n");
-                }
-                ast::Type::U8
-                | ast::Type::Char
-                | ast::Type::U16
-                | ast::Type::U32
-                | ast::Type::U64 => {
-                    self.asm.push_str("    udiv    x8, x8, x9\n");
-                }
-                _ => todo!("This type is not implemented for codegen"),
-            },
             lexer::Op::BwAnd => self.asm.push_str("    and     x8, x9, x10\n"),
             lexer::Op::BwOr => self.asm.push_str("    orr     x8, x9, x10\n"),
             lexer::Op::BwXor => self.asm.push_str("    eor     x8, x9, x10\n"),
-            lexer::Op::BwNot => self.asm.push_str("    movn    x8, x9\n"), // NOTE: Unary
+            lexer::Op::BwNot => self.asm.push_str("    mvn     x8, x9\n"),
+            lexer::Op::Div => {
+                if ty.is_signed() {
+                    self.asm.push_str("    sdiv    x8, x9, x10\n");
+                } else {
+                    self.asm.push_str("    udiv    x8, x9, x10\n");
+                }
+            }
             lexer::Op::Mod => {
                 self.emit_operation(&lexer::Op::Div, ty);
-                self.asm.push_str("    sub     x8, x9, x8\n");
+                self.asm.push_str("    mul     x10, x8, x10\n");
+                self.asm.push_str("    sub     x8, x9, x10\n");
+            }
+            lexer::Op::LgAnd => {
+                self.asm.push_str("    cmp     x9, 0\n");
+                self.asm.push_str("    cset    x9, ne\n");
+                self.asm.push_str("    cmp     x10, 0\n");
+                self.asm.push_str("    cset    x10, ne\n");
+                self.asm.push_str("    and     x8, x9, x10\n");
+                self.asm.push_str("    cmp     x8, 0\n");
+                self.asm.push_str("    cset    x8, ne\n");
+            }
+            lexer::Op::LgOr => {
+                self.asm.push_str("    cmp     x9, 0\n");
+                self.asm.push_str("    cset    x9, ne\n");
+                self.asm.push_str("    cmp     x10, 0\n");
+                self.asm.push_str("    cset    x10, ne\n");
+                self.asm.push_str("    orr     x8, x9, x10\n");
+                self.asm.push_str("    cmp     x8, 0\n");
+                self.asm.push_str("    cset    x8, ne\n");
             }
             lexer::Op::Lt => {
                 self.asm.push_str("    cmp     x9, x10\n");
@@ -113,7 +122,7 @@ impl CodeGenerator {
             }
             lexer::Op::Neq => {
                 self.asm.push_str("    cmp     x9, x10\n");
-                self.asm.push_str("    cset    x8, neq\n");
+                self.asm.push_str("    cset    x8, ne\n");
             }
             lexer::Op::Pwr => {
                 self.asm.push_str("    cbnz    x10, BASE_CASE_1\n"); // deg == 0
@@ -121,18 +130,15 @@ impl CodeGenerator {
                 self.asm.push_str("    b       PWR_LOOP_END\n");
 
                 self.asm.push_str("BASE_CASE_1:\n"); // deg == 1
+                self.asm.push_str("    mov     x8, x9\n"); // move lhs into accum
                 self.asm.push_str("    cmp     x10, 1\n");
-                self.asm.push_str("    bne     PWR_LOOP_SETUP\n");
-                self.asm.push_str("    mov     x8, x9\n");
+                self.asm.push_str("    bne     PWR_LOOP_START\n");
                 self.asm.push_str("    b       PWR_LOOP_END\n");
 
-                self.asm.push_str("PWR_LOOP_SETUP:\n");
-                self.asm.push_str("    mov     x8, x9\n"); // load lhs into accum
                 self.asm.push_str("PWR_LOOP_START:\n");
-                self.asm.push_str("    cmp     x10, 1\n");
-                self.asm.push_str("    beq     PWR_LOOP_END\n");
-                self.asm.push_str("    mul     x8, x8, x9\n"); // accum * lhs
                 self.asm.push_str("    sub     x10, x10, 1\n");
+                self.asm.push_str("    cbz    x10, PWR_LOOP_END\n");
+                self.asm.push_str("    mul     x8, x8, x9\n"); // accum * lhs
                 self.asm.push_str("    b       PWR_LOOP_START\n");
                 self.asm.push_str("PWR_LOOP_END:\n");
             }
