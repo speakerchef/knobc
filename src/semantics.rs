@@ -12,7 +12,6 @@ pub struct Sema<'a> {
     diag: &'a mut DiagHandler,
     sym: &'a mut lexer::SymbolTable,
     cached_ty: HashMap<lexer::Symbol, ast::Type>,
-    vars: SemaScope,
 }
 impl Sema<'_> {
     pub fn new<'a>(
@@ -25,7 +24,6 @@ impl Sema<'_> {
             diag,
             sym,
             cached_ty: HashMap::new(),
-            vars: HashMap::new(),
         }
     }
     fn default_integer_resolution(
@@ -310,7 +308,7 @@ impl Sema<'_> {
             self.visit_stmt(stmt, &mut global_scope);
         }
         self.prog.stmts = stmts;
-        println!("AST: \n{:#?}", self.prog.stmts);
+        // println!("AST: \n{:#?}", self.prog.stmts);
         Ok(())
     }
 }

@@ -41,7 +41,6 @@ impl Compiler {
         println!("Semantic Analysis & Type Checking...");
         let mut sema = Sema::new(&mut program, &mut diagnostics, &mut symbol_table);
         sema.validate_program()?;
-        // println!("AST: \n{:#?}", program.stmts);
         if diagnostics.has_errors() {
             diagnostics.display_diagnostics();
             exit(1);

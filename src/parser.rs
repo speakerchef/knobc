@@ -1,4 +1,3 @@
-use core::panic;
 use std::{cell::Cell, error::Error, rc::Rc};
 
 use crate::{
@@ -9,7 +8,6 @@ use crate::{
 };
 
 pub struct Parser<'a> {
-    prog: ast::Program,
     diag: &'a mut DiagHandler,
     lex: &'a mut Lexer,
 }
@@ -20,7 +18,6 @@ impl Parser<'_> {
         diagnostics: &'a mut DiagHandler,
     ) -> Result<Parser<'a>, Box<dyn Error>> {
         Ok(Parser {
-            prog: ast::Program::default(),
             diag: diagnostics,
             lex,
         })
@@ -319,11 +316,10 @@ impl Parser<'_> {
         });
 
         self.lex.next(); // eat '{'
-        self.parse_scope(&mut stmt_if.scope, false)
-            .unwrap_or_else(|_| {
-                self.diag
-                    .push_err(stmt_if.cond.loc, "invalid body for `if`");
-            });
+        self.parse_scope(&mut stmt_if.scope).unwrap_or_else(|_| {
+            self.diag
+                .push_err(stmt_if.cond.loc, "invalid body for `if`");
+        });
 
         while let Some(&maybe_elif) = self.lex.peek()
             && matches!(maybe_elif.kind, TokenType::KwElif)
@@ -342,11 +338,10 @@ impl Parser<'_> {
             });
 
             self.lex.next(); // eat '{'
-            self.parse_scope(&mut _elif.scope, false)
-                .unwrap_or_else(|_| {
-                    self.diag
-                        .push_err(stmt_if.cond.loc, "invalid body for `elif`")
-                });
+            self.parse_scope(&mut _elif.scope).unwrap_or_else(|_| {
+                self.diag
+                    .push_err(stmt_if.cond.loc, "invalid body for `elif`")
+            });
             stmt_if._elif.push(Some(_elif));
         }
 
@@ -361,11 +356,10 @@ impl Parser<'_> {
                 _else.scope.vars.insert(k, Rc::clone(v));
             });
             self.lex.next(); // eat '{'
-            self.parse_scope(&mut _else.scope, false)
-                .unwrap_or_else(|_| {
-                    self.diag
-                        .push_err(stmt_if.cond.loc, "invalid body for `else`")
-                });
+            self.parse_scope(&mut _else.scope).unwrap_or_else(|_| {
+                self.diag
+                    .push_err(stmt_if.cond.loc, "invalid body for `else`")
+            });
             stmt_if._else = Some(_else);
         }
         stmt_if
@@ -387,22 +381,17 @@ impl Parser<'_> {
         });
 
         self.lex.next(); // eat '{'
-        self.parse_scope(&mut stmt_while.scope, false)
-            .unwrap_or_else(|_| {
-                self.diag.push_err(
-                    self.lex.peek_behind().unwrap().loc,
-                    "invalid body for `while`",
-                )
-            });
+        self.parse_scope(&mut stmt_while.scope).unwrap_or_else(|_| {
+            self.diag.push_err(
+                self.lex.peek_behind().unwrap().loc,
+                "invalid body for `while`",
+            )
+        });
 
         stmt_while
     }
 
-    fn parse_scope(
-        &mut self,
-        outer_scp: &mut ast::Scope,
-        is_prog: bool,
-    ) -> Result<(), Box<dyn Error>> {
+    fn parse_scope(&mut self, outer_scp: &mut ast::Scope) -> Result<(), Box<dyn Error>> {
         let mut loc_scp = ast::Scope::default();
         outer_scp.vars.iter().for_each(|(&k, v)| {
             loc_scp.vars.insert(k, Rc::clone(v));
@@ -469,7 +458,7 @@ impl Parser<'_> {
                 TokenType::Lcurly => {
                     self.lex.next();
                     let mut scp = ast::Scope::default();
-                    self.parse_scope(&mut loc_scp, false)?;
+                    self.parse_scope(&mut loc_scp)?;
                     scp.stmts.append(&mut loc_scp.stmts);
                     outer_scp.stmts.push(ast::UnionNode::Scope(scp));
                 }
@@ -483,7 +472,7 @@ impl Parser<'_> {
     }
     pub fn create_program(&mut self) -> Result<ast::Program, Box<dyn Error>> {
         let mut global_scope = ast::Scope::default();
-        self.parse_scope(&mut global_scope, true)?;
+        self.parse_scope(&mut global_scope)?;
         Ok(ast::Program {
             sym: self.lex.sym.clone(),
             stmts: global_scope.stmts,

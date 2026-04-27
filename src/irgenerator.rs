@@ -180,7 +180,7 @@ pub struct Label {
 }
 impl Dump for Label {
     fn dump(&self) {
-        println!("    {}", self.name,)
+        println!("    label {}", self.name,)
     }
 }
 
@@ -239,16 +239,15 @@ impl IrGenerator<'_> {
             let lhs;
             let rhs;
             match lvalue.0 {
-                ast::AtomKind::Ident(id) => lhs = ArgType::Sym(format!("{}", id.name)),
+                ast::AtomKind::Ident(id) => lhs = ArgType::Sym(id.name.to_string()),
                 ast::AtomKind::IntLit(value) => lhs = ArgType::Imm(value.val),
                 ast::AtomKind::None => lhs = ArgType::Temp(lvalue.1.as_ref().unwrap().clone()),
             }
             match rvalue.0 {
-                ast::AtomKind::Ident(id) => rhs = ArgType::Sym(format!("{}", id.name)),
+                ast::AtomKind::Ident(id) => rhs = ArgType::Sym(id.name.to_string()),
                 ast::AtomKind::IntLit(value) => rhs = ArgType::Imm(value.val),
                 ast::AtomKind::None => rhs = ArgType::Temp(rvalue.1.as_ref().unwrap().clone()),
             }
-
             // opnode
             self.ir.nodes.push(KlirNode::Expr(Expr {
                 ty: expr
@@ -266,7 +265,6 @@ impl IrGenerator<'_> {
             }));
             return (expr.atom.clone(), Some(dest));
         }
-
         if !matches!(expr.atom, ast::AtomKind::None) {
             return (expr.atom.clone(), None);
         }
@@ -287,7 +285,7 @@ impl IrGenerator<'_> {
                 ArgType::Temp(temp.clone())
             } else {
                 match atom {
-                    ast::AtomKind::Ident(id) => ArgType::Sym(format!("{}", id.name)),
+                    ast::AtomKind::Ident(id) => ArgType::Sym(id.name.to_string()),
                     ast::AtomKind::IntLit(lit) => ArgType::Imm(lit.val),
                     ast::AtomKind::None => panic!("unexpected None atomkind"),
                 }
@@ -313,7 +311,7 @@ impl IrGenerator<'_> {
                     ArgType::Temp(temp.clone())
                 } else {
                     match atom {
-                        ast::AtomKind::Ident(id) => ArgType::Sym(format!("{}", id.name)),
+                        ast::AtomKind::Ident(id) => ArgType::Sym(id.name.to_string()),
                         ast::AtomKind::IntLit(val) => ArgType::Imm(val.val),
                         ast::AtomKind::None => panic!("unexpected None atomkind here"),
                     }
@@ -326,7 +324,7 @@ impl IrGenerator<'_> {
         let result = if let Some(temp) = temp {
             temp.clone()
         } else {
-            format!("{}", atom)
+            atom.to_string()
         };
 
         let if_body_label = format!("LABEL_IF_BODY_{}", self.label_counter);
@@ -375,7 +373,7 @@ impl IrGenerator<'_> {
             let elif_result = if let Some(temp) = temp {
                 temp.clone()
             } else {
-                format!("{}", atom)
+                atom.to_string()
             };
 
             let elif_body_label = format!("LABEL_ELIF_BODY_{}", self.label_counter);
@@ -436,6 +434,49 @@ impl IrGenerator<'_> {
         }));
     }
 
+    fn visit_stmt_while(&mut self, stmt_while: &ast::StmtWhile) {
+        let start_while_label = format!("START_WHILE_{}", self.label_counter);
+        let loop_while_label = format!("LOOP_WHILE_{}", self.label_counter);
+        let end_while_label = format!("END_WHILE_{}", self.label_counter);
+
+        self.ir.nodes.push(KlirNode::Label(Label {
+            name: start_while_label.clone(),
+        }));
+
+        let (atom, temp) = self.visit_expr(&stmt_while.cond);
+        self.label_counter += 1;
+        let result = if let Some(temp) = temp {
+            temp
+        } else {
+            atom.to_string()
+        };
+        // Conditional br to while loop
+        self.ir.nodes.push(KlirNode::Br(Br {
+            label: loop_while_label.clone(),
+            flag: Some(result),
+        }));
+        // unconditional br to end
+        self.ir.nodes.push(KlirNode::Br(Br {
+            label: end_while_label.clone(),
+            flag: None,
+        }));
+        // start while loop
+        self.ir.nodes.push(KlirNode::Label(Label {
+            name: loop_while_label.clone(),
+        }));
+        self.visit_scope(&stmt_while.scope.stmts);
+        // unconditional br to start
+        self.ir.nodes.push(KlirNode::Br(Br {
+            label: start_while_label.clone(),
+            flag: None,
+        }));
+
+        // end while loop
+        self.ir.nodes.push(KlirNode::Label(Label {
+            name: end_while_label.clone(),
+        }));
+    }
+
     fn visit_scope(&mut self, stmts: &[UnionNode]) {
         for stmt in stmts {
             match stmt {
@@ -450,6 +491,9 @@ impl IrGenerator<'_> {
                 }
                 UnionNode::StmtIf(stmt_if) => {
                     self.visit_stmt_if(stmt_if);
+                }
+                UnionNode::StmtWhile(stmt_while) => {
+                    self.visit_stmt_while(stmt_while);
                 }
                 UnionNode::Scope(scp) => {
                     self.visit_scope(&scp.stmts);

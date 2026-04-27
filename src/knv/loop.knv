@@ -1,9 +1,7 @@
 mut counter = 0;
-mut accum = 0;
 while counter < 50 {
-    counter = counter - 1;
-    accum = accum + 1;
+    counter = counter + 1;
 }
-exit accum;
+exit counter;
 
 

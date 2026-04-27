@@ -58,31 +58,28 @@ impl CodeGenerator {
             _ => todo!("This type is not implemented for codegen"),
         }
     }
-    fn emit_typed_store(&mut self, ty: &ast::Type, reg_idx: usize) {
+    fn emit_typed_store(&mut self, ty: &ast::Type, reg_idx: usize, reassign_addr: Option<usize>) {
+        let addr = if let Some(cached_adr) = reassign_addr {
+            cached_adr
+        } else {
+            self.stackptr
+        };
         match ty {
             ast::Type::I8 | ast::Type::U8 | ast::Type::Char | ast::Type::Bool => {
-                self.asm.push_str(&format!(
-                    "    strb    w{}, [sp, {}]\n",
-                    reg_idx, self.stackptr
-                ));
+                self.asm
+                    .push_str(&format!("    strb    w{}, [sp, {}]\n", reg_idx, addr));
             }
             ast::Type::I16 | ast::Type::U16 => {
-                self.asm.push_str(&format!(
-                    "    strh    w{}, [sp, {}]\n",
-                    reg_idx, self.stackptr
-                ));
+                self.asm
+                    .push_str(&format!("    strh    w{}, [sp, {}]\n", reg_idx, addr));
             }
             ast::Type::I32 | ast::Type::U32 => {
-                self.asm.push_str(&format!(
-                    "    str     w{}, [sp, {}]\n",
-                    reg_idx, self.stackptr
-                ));
+                self.asm
+                    .push_str(&format!("    str     w{}, [sp, {}]\n", reg_idx, addr));
             }
             ast::Type::I64 | ast::Type::U64 => {
-                self.asm.push_str(&format!(
-                    "    str     x{}, [sp, {}]\n",
-                    reg_idx, self.stackptr
-                ));
+                self.asm
+                    .push_str(&format!("    str     x{}, [sp, {}]\n", reg_idx, addr));
             }
             _ => todo!("This type is not implemented for codegen"),
         }
@@ -249,20 +246,37 @@ impl CodeGenerator {
                     match &store.src {
                         ArgType::Imm(val) => {
                             self.emit_typed_move(&store.ty, 8, *val);
-                            self.emit_typed_store(&store.ty, 8);
+                            self.emit_typed_store(&store.ty, 8, None);
                             self.vars
                                 .insert(store.dest.clone(), (store.ty, self.stackptr));
+                            self.stackptr += 8;
                         }
                         ArgType::Sym(name) | ArgType::Temp(name) => {
-                            let &(ty, addr) = self.vars.get(name).unwrap();
-                            self.vars.insert(store.dest.clone(), (ty, addr));
+                            let &(src_ty, src_addr) = self.vars.get(name).unwrap();
+                            if let Some(&(dst_ty, dst_addr)) = self.vars.get(&store.dest) {
+                                self.emit_typed_load(&src_ty, 8, src_addr);
+                                self.emit_typed_store(&dst_ty, 8, Some(dst_addr));
+                                self.vars.insert(store.dest.clone(), (dst_ty, dst_addr));
+                            } else {
+                                self.vars.insert(store.dest.clone(), (src_ty, src_addr));
+                            }
+                            self.stackptr += 8;
                         }
                     }
                     self.stackptr += 8;
                 }
                 KlirNode::Expr(expr) => {
+                    let mut reassign_addr = None;
                     match &expr.lhs {
-                        ArgType::Sym(name) | ArgType::Temp(name) => {
+                        ArgType::Sym(name) => {
+                            println!("Sym Name: {name}, Expr Dest: {}", expr.dest);
+                            let &(ty, sym_addr) = self.vars.get(name).unwrap_or_else(|| {
+                                panic!("Error loading address for variable {name}")
+                            });
+                            self.emit_typed_load(&ty, 9, sym_addr);
+                        }
+                        ArgType::Temp(name) => {
+                            println!("Sym Name: {name}");
                             let &(ty, sym_addr) = self.vars.get(name).unwrap_or_else(|| {
                                 panic!("Error loading address for variable {name}")
                             });
@@ -273,22 +287,44 @@ impl CodeGenerator {
                         }
                     }
                     match &expr.rhs {
-                        ArgType::Sym(name) | ArgType::Temp(name) => {
+                        ArgType::Sym(name) => {
+                            println!("Sym Name: {name}, Expr Dest: {}", expr.dest);
                             let &(ty, sym_addr) = self.vars.get(name).unwrap_or_else(|| {
                                 panic!("Error loading address for variable {name}")
                             });
                             self.emit_typed_load(&ty, 10, sym_addr);
                         }
+                        ArgType::Temp(name) => {
+                            println!("Sym Name: {name}, Expr Dest: {}", expr.dest);
+                            let &(ty, sym_addr) = self.vars.get(name).unwrap_or_else(|| {
+                                panic!("Error loading address for variable {name}")
+                            });
+                            self.emit_typed_load(&ty, 9, sym_addr);
+                        }
                         ArgType::Imm(val) => {
                             self.asm.push_str(&format!("    mov     x10, {}\n", val));
                         }
                     }
-
+                    let mut ty_to_store = expr.ty;
+                    if let Some(&(ty, sym_addr)) = self.vars.get(&expr.dest) {
+                        reassign_addr = Some(sym_addr);
+                        ty_to_store = ty;
+                    }
                     self.emit_operation(&expr.op, &expr.ty);
-                    self.emit_typed_store(&expr.ty, 8);
-                    self.vars
-                        .insert(expr.dest.clone(), (expr.ty, self.stackptr));
-                    self.stackptr += 8;
+                    self.emit_typed_store(&ty_to_store, 8, reassign_addr);
+                    self.vars.insert(
+                        expr.dest.clone(),
+                        (
+                            ty_to_store,
+                            if let Some(readdr) = reassign_addr {
+                                readdr
+                            } else {
+                                let ret = self.stackptr;
+                                self.stackptr += 8;
+                                ret
+                            },
+                        ),
+                    );
                 }
                 KlirNode::Call(call) => {
                     for (argc, (ty, arg_type)) in call.args.iter().enumerate() {
