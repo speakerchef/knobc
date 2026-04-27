@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs;
-use std::process::Command;
+use std::process::{Command, ExitCode, exit};
 
 use crate::backend::CodeGenerator;
 use crate::diagnostics::DiagHandler;
@@ -44,6 +44,7 @@ impl Compiler {
         // println!("AST: \n{:#?}", program.stmts);
         if diagnostics.has_errors() {
             diagnostics.display_diagnostics();
+            exit(1);
         }
 
         // KLIR Generation

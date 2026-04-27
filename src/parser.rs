@@ -323,7 +323,6 @@ impl Parser<'_> {
                 panic!("BOO");
             });
 
-        println!("Token before elif: {:?}", self.lex.peek().unwrap());
         while let Some(&maybe_elif) = self.lex.peek()
             && matches!(maybe_elif.kind, TokenType::KwElif)
         {
@@ -347,7 +346,6 @@ impl Parser<'_> {
             stmt_if._elif.push(Some(_elif));
         }
 
-        println!("Token before else: {:?}", self.lex.peek().unwrap());
         if let Some(&maybe_else) = self.lex.peek()
             && matches!(maybe_else.kind, TokenType::KwElse)
         {
@@ -425,6 +423,16 @@ impl Parser<'_> {
                     self.lex.next(); // eat 'if'
                     let stmt_if = self.parse_stmt_if(&mut loc_scp);
                     focused_stmts.push(ast::UnionNode::StmtIf(stmt_if));
+                }
+                TokenType::KwElif => {
+                    self.lex.next();
+                    self.diag
+                        .push_err(tok.loc, "expected accompanying `if` statement for `elif`");
+                }
+                TokenType::KwElse => {
+                    self.lex.next();
+                    self.diag
+                        .push_err(tok.loc, "expected accompanying `if` statement for `else`");
                 }
                 TokenType::Semi => {
                     self.lex.next();

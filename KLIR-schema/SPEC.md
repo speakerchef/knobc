@@ -35,7 +35,7 @@
 | `label` \<name>:  | `label` mycondition: |
 | `cmp` \<T>, \<cond>, \<lhs>, \<rhs>, \<dest>  | `cmp` i32, `lte`, %foo, %bar, %result  |
 | `br` \<label>, \<optional-flag>  | `br` lb_body, %result *OR* `br` lb_else |
-| Conditions |
+| Conditions \<cond> |
 |-|
 | `lt`
 | `gt`|

@@ -1,5 +1,5 @@
 use core::panic;
-use std::{error::Error, fmt::Display, rc::Rc};
+use std::{collections, error::Error, fmt::Display, rc::Rc};
 
 use crate::{
     ast::{self, UnionNode},
@@ -40,6 +40,9 @@ impl Dump for KlirBlob {
                 KlirNode::Store(store) => store.dump(),
                 KlirNode::Call(call) => call.dump(),
                 KlirNode::Expr(op) => op.dump(),
+                KlirNode::Cond(cond) => cond.dump(),
+                KlirNode::Br(br) => br.dump(),
+                KlirNode::Label(label) => label.dump(),
             }
         }
     }
@@ -50,6 +53,7 @@ pub struct IrGenerator<'a> {
     _diag: &'a mut DiagHandler,
     pub ir: KlirBlob,
     reg_counter: usize,
+    label_counter: usize,
 }
 
 #[derive(Debug)]
@@ -165,11 +169,60 @@ impl Dump for Expr {
 }
 
 #[derive(Debug)]
+pub struct Cond {
+    pub ty: ast::Type,
+    pub cond: lexer::Op,
+    pub _if: (String /* if body label */, Vec<KlirNode>),
+    pub _elif: Option<(String /* elif label */, Vec<KlirNode>)>,
+    pub _else: Option<(String, Vec<KlirNode>)>,
+    pub endif_label: String,
+    pub flag: String, // %result
+}
+
+impl Dump for Cond {
+    fn dump(&self) {
+        println!("    cond {}, {}, {}", self.ty, self.cond, self.flag,)
+    }
+}
+
+#[derive(Debug)]
+pub struct Cmp {
+    pub ty: ast::Type,
+    pub flag: String, // %result
+    pub jump: String,
+}
+
+#[derive(Debug)]
+pub struct Label {
+    pub name: String, // unconditional
+}
+impl Dump for Label {
+    fn dump(&self) {
+        println!("    {}", self.name,)
+    }
+}
+
+#[derive(Debug)]
+pub struct Br {
+    pub label: String,        // unconditional
+    pub flag: Option<String>, // %result
+}
+
+impl Dump for Br {
+    fn dump(&self) {
+        println!("    br {}", self.label,)
+    }
+}
+
+#[derive(Debug)]
 pub enum KlirNode {
     Alloca(Alloca),
     Store(Store),
     Call(Call),
     Expr(Expr),
+    Cond(Cond),
+    Br(Br),
+    Label(Label),
 }
 
 impl IrGenerator<'_> {
@@ -179,6 +232,7 @@ impl IrGenerator<'_> {
             _diag: diag,
             ir: KlirBlob::default(),
             reg_counter: 0,
+            label_counter: 0,
         }
     }
     #[must_use]
@@ -294,14 +348,127 @@ impl IrGenerator<'_> {
             )],
         }))
     }
-    pub fn emit_klir(&mut self) -> Result<(), Box<dyn Error>> {
-        let arch = std::env::consts::ARCH;
-        self.ir = KlirBlob::default();
-        self.ir.target = Target::from(arch);
-        dbg!(&self.ir.target);
+    fn visit_stmt_if(&mut self, stmt_if: &ast::StmtIf) {
+        let (atom, temp) = self.visit_expr(&stmt_if.cond);
+        let result = if let Some(temp) = temp {
+            temp.clone()
+        } else {
+            format!("{}", atom)
+        };
+        let ty = stmt_if
+            .cond
+            .ty
+            .get()
+            .expect("Could not get type for stmt_if");
 
-        let stmts = std::mem::take(&mut self.prog.stmts);
-        for stmt in &stmts {
+        let if_body_label = format!("LABEL_IF_BODY_{}", self.label_counter);
+        let init_elif_body_label = format!("LABEL_ELIF_INIT_{}", self.label_counter);
+        let else_body_label = format!("LABEL_ELSE_BODY_{}", self.label_counter);
+        let endif_label = format!("LABEL_ENDIF_{}", self.label_counter);
+        self.label_counter += 1;
+        // Conditional branch to if body
+        self.ir.nodes.push(KlirNode::Br(Br {
+            label: if_body_label.clone(),
+            flag: Some(result),
+        }));
+        // Branch to elif, else, or end
+        self.ir.nodes.push(KlirNode::Br(Br {
+            label: if !stmt_if._elif.is_empty() {
+                init_elif_body_label.clone()
+            } else if stmt_if._else.is_some() {
+                else_body_label.clone()
+            } else {
+                endif_label.clone()
+            },
+            flag: None,
+        }));
+        // If body start
+        self.ir.nodes.push(KlirNode::Label(Label {
+            name: if_body_label.clone(),
+        }));
+        // Body scope
+        self.visit_scope(&stmt_if.scope.stmts);
+        // Jump to end
+        self.ir.nodes.push(KlirNode::Br(Br {
+            label: endif_label.clone(),
+            flag: None,
+        }));
+
+        // First elif init
+        if !stmt_if._elif.is_empty() {
+            self.ir.nodes.push(KlirNode::Label(Label {
+                name: init_elif_body_label.clone(),
+            }));
+        }
+        let mut elif_collection = stmt_if._elif.iter().flatten().peekable();
+        while let Some(elif) = elif_collection.next() {
+            let (atom, temp) = self.visit_expr(&elif.cond);
+            let elif_result = if let Some(temp) = temp {
+                temp.clone()
+            } else {
+                format!("{}", atom)
+            };
+
+            let elif_body_label = format!("LABEL_ELIF_BODY_{}", self.label_counter);
+            self.label_counter += 1;
+            let next_elif_body_label = format!("LABEL_ELIF_BODY_{}", self.label_counter);
+            // Conditional branch to elif body
+            self.ir.nodes.push(KlirNode::Br(Br {
+                label: elif_body_label.clone(),
+                flag: Some(elif_result),
+            }));
+
+            //fallback Branch to other elifs, else, or end
+            self.ir.nodes.push(KlirNode::Br(Br {
+                label: if elif_collection.peek().is_some() {
+                    next_elif_body_label.clone()
+                } else if stmt_if._else.is_some() {
+                    else_body_label.clone()
+                } else {
+                    endif_label.clone()
+                },
+                flag: None,
+            }));
+            // current elif body label
+            self.ir.nodes.push(KlirNode::Label(Label {
+                name: elif_body_label.clone(),
+            }));
+            self.visit_scope(&elif.scope.stmts);
+            // Jump to end
+            self.ir.nodes.push(KlirNode::Br(Br {
+                label: endif_label.clone(),
+                flag: None,
+            }));
+
+            // other elifs labels
+            if elif_collection.peek().is_some() {
+                self.ir.nodes.push(KlirNode::Label(Label {
+                    name: next_elif_body_label,
+                }));
+            }
+        }
+
+        // else body start
+        self.ir.nodes.push(KlirNode::Label(Label {
+            name: else_body_label.clone(),
+        }));
+        // else body scope
+        if let Some(maybeelse) = &stmt_if._else {
+            self.visit_scope(&maybeelse.scope.stmts);
+        }
+        // Jump to end
+        self.ir.nodes.push(KlirNode::Br(Br {
+            label: endif_label.clone(),
+            flag: None,
+        }));
+        // end start
+        self.ir.nodes.push(KlirNode::Label(Label {
+            name: endif_label.clone(),
+        }));
+    }
+
+    fn visit_scope(&mut self, stmts: &[UnionNode]) {
+        for stmt in stmts {
             match stmt {
                 UnionNode::VarDecl(decl) => {
                     self.visit_decl(Rc::clone(decl).as_ref());
@@ -312,12 +479,25 @@ impl IrGenerator<'_> {
                 UnionNode::Expr(expr) => {
                     let _ = self.visit_expr(expr);
                 }
+                UnionNode::StmtIf(stmt_if) => {
+                    self.visit_stmt_if(stmt_if);
+                }
                 _ => todo!("No visitor for this node type in IRGen"),
             }
         }
+    }
+
+    pub fn emit_klir(&mut self) -> Result<(), Box<dyn Error>> {
+        let arch = std::env::consts::ARCH;
+        self.ir = KlirBlob::default();
+        self.ir.target = Target::from(arch);
+        dbg!(&self.ir.target);
+
+        let stmts = std::mem::take(&mut self.prog.stmts);
+        self.visit_scope(&stmts);
         // println!("IR: \n{}", self.ir.data);
         println!("IR: \n{:#?}", self.ir.nodes);
-        println!("IR String Dump: \n");
+        // println!("IR String Dump: \n");
         self.ir.dump();
         self.prog.stmts = stmts;
         Ok(())

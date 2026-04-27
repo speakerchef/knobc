@@ -210,6 +210,7 @@ impl CodeGenerator {
                     self.asm
                         .push_str(&format!("    bl      {}\n", call.methodname));
                 }
+                _ => todo!("WIP"),
             }
         }
         self.emit_epilogue();

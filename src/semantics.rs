@@ -27,36 +27,36 @@ impl Sema<'_> {
             vars: HashMap::new(),
         }
     }
-    // fn default_integer_resolution(
-    //     val: i128,
-    //     diag: &mut DiagHandler,
-    //     loc: crate::lexer::LocData,
-    // ) -> Option<ast::Type> {
-    //     if i32::try_from(val).is_ok() {
-    //         Some(ast::Type::I32)
-    //     } else if i64::try_from(val).is_ok() {
-    //         Some(ast::Type::I64)
-    //     } else {
-    //         println!("Type did not resolve");
-    //         diag.push_err(
-    //             loc,
-    //             &format!(
-    //                 "integer literal `{}` exceeds the range of default type i64",
-    //                 val
-    //             ),
-    //         );
-    //         if u64::try_from(val).is_ok() {
-    //             diag.push_note(
-    //                 loc,
-    //                 "consider annotating the type at declaration `let digit: u64 = ...`",
-    //             );
-    //         } else {
-    //             diag.push_warn(loc,
-    //                 &format!("use of excessively large integer literal `{}`; consider using a smaller value", val));
-    //         }
-    //         None
-    //     }
-    // }
+    fn default_integer_resolution(
+        &mut self,
+        val: i128,
+        loc: crate::lexer::LocData,
+    ) -> Option<ast::Type> {
+        if i32::try_from(val).is_ok() {
+            Some(ast::Type::I32)
+        } else if i64::try_from(val).is_ok() {
+            Some(ast::Type::I64)
+        } else {
+            println!("Type did not resolve");
+            self.diag.push_err(
+                loc,
+                &format!(
+                    "integer literal `{}` exceeds the range of default type i64",
+                    val
+                ),
+            );
+            if u64::try_from(val).is_ok() {
+                self.diag.push_note(
+                    loc,
+                    "consider annotating the type at declaration `let digit: u64 = ...`",
+                );
+            } else {
+                self.diag.push_warn(loc,
+                    &format!("use of excessively large integer literal `{}`; consider using a smaller value", val));
+            }
+            None
+        }
+    }
     fn resolve_integer_resolution(
         &mut self,
         val: i128,
@@ -104,6 +104,46 @@ impl Sema<'_> {
         expr.ty.set(Some(ty));
     }
 
+    fn visit_stmt(&mut self, stmt: &ast::UnionNode) {
+        match stmt {
+            UnionNode::VarDecl(decl) => {
+                let rc = &mut Rc::clone(decl);
+                if let Some(existing_decl_kind) = self.vars.get(&decl.id.name)
+                    && matches!(existing_decl_kind, ast::VarType::Let)
+                {
+                    self.diag.push_err(
+                        decl.id.loc,
+                        &format!(
+                            "cannot re-assign `{}` declared with `let`",
+                            self.sym.get(decl.id.name).unwrap()
+                        ),
+                    );
+                    self.diag
+                        .push_note(decl.id.loc, "consider using `mut` instead");
+                }
+                self.visit_decl(rc);
+            }
+            UnionNode::Expr(expr) => {
+                self.visit_expr(expr.as_ref());
+            }
+            UnionNode::StmtExit(enode) => {
+                self.visit_stmt_exit(enode);
+            }
+            UnionNode::StmtIf(stmt_if) => {
+                self.visit_stmt_if(stmt_if);
+            }
+            UnionNode::StmtElif(v) => {
+                self.diag
+                    .push_err(v.loc, "expected accompanying `if` statement for `elif`");
+            }
+            UnionNode::StmtElse(v) => {
+                self.diag
+                    .push_err(v.loc, "expected accompanying `if` statement for `else`");
+            }
+            _ => todo!("Semantic analysis for this nodetype is not implemented"),
+        }
+    }
+
     fn visit_expr(&mut self, expr: &ast::Expr) {
         if let Some(lhs) = &expr.lhs {
             self.visit_expr(lhs);
@@ -114,6 +154,7 @@ impl Sema<'_> {
         match expr.atom {
             ast::AtomKind::Ident(id) => {
                 if let Some(&cached_ty) = self.cached_ty.get(&id.name) {
+                    println!("Cached Type: {}", cached_ty);
                     expr.ty.set(Some(cached_ty));
                 } else {
                     self.diag.push_err(
@@ -128,7 +169,7 @@ impl Sema<'_> {
             }
             ast::AtomKind::IntLit(lit) => {
                 expr.ty
-                    .set(self.resolve_integer_resolution(lit.val, lit.loc));
+                    .set(self.default_integer_resolution(lit.val, lit.loc));
             }
             ast::AtomKind::None => {
                 expr.ty
@@ -207,42 +248,35 @@ impl Sema<'_> {
         self.cached_ty.insert(decl.id.name, decl.ty.get().unwrap());
     }
 
+    fn visit_scope(&mut self, scope: &ast::Scope) {
+        for stmt in &scope.stmts {
+            self.visit_stmt(stmt);
+        }
+    }
+
     fn visit_stmt_exit(&mut self, enode: &ast::StmtExit) {
         self.visit_expr(&enode.exit_code);
+    }
+    fn visit_stmt_if(&mut self, stmt_if: &ast::StmtIf) {
+        self.visit_expr(&stmt_if.cond);
+        self.visit_scope(&stmt_if.scope);
+
+        for elif in stmt_if._elif.iter().flatten() {
+            self.visit_expr(&elif.cond);
+            self.visit_scope(&elif.scope);
+        }
+        if let Some(maybe_else) = &stmt_if._else {
+            self.visit_scope(&maybe_else.scope);
+        }
     }
 
     pub fn validate_program(&mut self) -> Result<(), Box<dyn Error>> {
         let stmts = std::mem::take(&mut self.prog.stmts);
-        println!("AST: {:#?}", stmts);
         for stmt in &stmts {
-            match stmt {
-                UnionNode::VarDecl(decl) => {
-                    let rc = &mut Rc::clone(decl);
-                    if let Some(existing_decl_kind) = self.vars.get(&decl.id.name)
-                        && matches!(existing_decl_kind, ast::VarType::Let)
-                    {
-                        self.diag.push_err(
-                            decl.id.loc,
-                            &format!(
-                                "cannot re-assign `{}` declared with `let`",
-                                self.sym.get(decl.id.name).unwrap()
-                            ),
-                        );
-                        self.diag
-                            .push_note(decl.id.loc, "consider using `mut` instead");
-                    }
-                    self.visit_decl(rc);
-                }
-                UnionNode::Expr(expr) => {
-                    self.visit_expr(expr.as_ref());
-                }
-                UnionNode::StmtExit(enode) => {
-                    self.visit_stmt_exit(enode);
-                }
-                _ => todo!("Semantic analysis for this nodetype is not implemented"),
-            }
+            self.visit_stmt(stmt);
         }
         self.prog.stmts = stmts;
+        println!("AST: {:#?}", self.prog.stmts);
         Ok(())
     }
 }
