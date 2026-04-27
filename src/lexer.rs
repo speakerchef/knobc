@@ -507,10 +507,6 @@ impl Lexer {
                 kind: TokenType::KwWhile,
                 loc,
             }),
-            "for" => Ok(Token {
-                kind: TokenType::KwWhile,
-                loc,
-            }),
             "fn" => Ok(Token {
                 kind: TokenType::KwFn,
                 loc,

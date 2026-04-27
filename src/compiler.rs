@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs;
-use std::process::{Command, ExitCode, exit};
+use std::process::{Command, exit};
 
 use crate::backend::CodeGenerator;
 use crate::diagnostics::DiagHandler;

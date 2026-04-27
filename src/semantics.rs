@@ -6,12 +6,13 @@ use crate::{
 use core::panic;
 use std::{collections::HashMap, error::Error, rc::Rc};
 
+type SemaScope = HashMap<lexer::Symbol, ast::VarType>;
 pub struct Sema<'a> {
     prog: &'a mut ast::Program,
     diag: &'a mut DiagHandler,
     sym: &'a mut lexer::SymbolTable,
     cached_ty: HashMap<lexer::Symbol, ast::Type>,
-    vars: HashMap<lexer::Symbol, ast::VarType>,
+    vars: SemaScope,
 }
 impl Sema<'_> {
     pub fn new<'a>(
@@ -57,6 +58,7 @@ impl Sema<'_> {
             None
         }
     }
+    #[allow(dead_code)]
     fn resolve_integer_resolution(
         &mut self,
         val: i128,
@@ -104,11 +106,11 @@ impl Sema<'_> {
         expr.ty.set(Some(ty));
     }
 
-    fn visit_stmt(&mut self, stmt: &ast::UnionNode) {
+    fn visit_stmt(&mut self, stmt: &ast::UnionNode, outer_scp: &mut SemaScope) {
         match stmt {
             UnionNode::VarDecl(decl) => {
                 let rc = &mut Rc::clone(decl);
-                if let Some(existing_decl_kind) = self.vars.get(&decl.id.name)
+                if let Some(existing_decl_kind) = outer_scp.get(&decl.id.name)
                     && matches!(existing_decl_kind, ast::VarType::Let)
                 {
                     self.diag.push_err(
@@ -120,17 +122,25 @@ impl Sema<'_> {
                     );
                     self.diag
                         .push_note(decl.id.loc, "consider using `mut` instead");
+                } else if decl.is_reassign && outer_scp.get(&decl.id.name).is_none() {
+                    self.diag.push_err(
+                        decl.id.loc,
+                        &format!(
+                            "use of undeclared identifier `{}`",
+                            self.sym.get(decl.id.name).unwrap()
+                        ),
+                    );
                 }
-                self.visit_decl(rc);
+                self.visit_decl(rc, outer_scp);
             }
             UnionNode::Expr(expr) => {
-                self.visit_expr(expr.as_ref());
+                self.visit_expr(expr.as_ref(), outer_scp);
             }
             UnionNode::StmtExit(enode) => {
-                self.visit_stmt_exit(enode);
+                self.visit_stmt_exit(enode, outer_scp);
             }
             UnionNode::StmtIf(stmt_if) => {
-                self.visit_stmt_if(stmt_if);
+                self.visit_stmt_if(stmt_if, outer_scp);
             }
             UnionNode::StmtElif(v) => {
                 self.diag
@@ -140,21 +150,35 @@ impl Sema<'_> {
                 self.diag
                     .push_err(v.loc, "expected accompanying `if` statement for `else`");
             }
+            UnionNode::StmtWhile(stmt_while) => {
+                self.visit_stmt_while(stmt_while, outer_scp);
+            }
+            UnionNode::Scope(scp) => {
+                self.visit_scope(scp, outer_scp);
+            }
             _ => todo!("Semantic analysis for this nodetype is not implemented"),
         }
     }
 
-    fn visit_expr(&mut self, expr: &ast::Expr) {
+    fn visit_expr(&mut self, expr: &ast::Expr, outer_scp: &mut SemaScope) {
         if let Some(lhs) = &expr.lhs {
-            self.visit_expr(lhs);
+            self.visit_expr(lhs, outer_scp);
         }
         if let Some(rhs) = &expr.rhs {
-            self.visit_expr(rhs);
+            self.visit_expr(rhs, outer_scp);
         }
         match expr.atom {
             ast::AtomKind::Ident(id) => {
+                if !outer_scp.contains_key(&id.name) {
+                    self.diag.push_err(
+                        id.loc,
+                        &format!(
+                            "use of undeclared identifier `{}`",
+                            self.sym.get(id.name).unwrap()
+                        ),
+                    );
+                }
                 if let Some(&cached_ty) = self.cached_ty.get(&id.name) {
-                    println!("Cached Type: {}", cached_ty);
                     expr.ty.set(Some(cached_ty));
                 } else {
                     self.diag.push_err(
@@ -205,8 +229,8 @@ impl Sema<'_> {
             }
         }
     }
-    fn visit_decl(&mut self, decl: &ast::VarDecl) {
-        self.visit_expr(decl.value.as_ref());
+    fn visit_decl(&mut self, decl: &ast::VarDecl, outer_scp: &mut SemaScope) {
+        self.visit_expr(decl.value.as_ref(), outer_scp);
         if decl.value.ty.get().is_none() {
             self.diag
                 .push_err(decl.loc, "could not resolve type for variable declaration");
@@ -244,39 +268,49 @@ impl Sema<'_> {
             }
         }
         self.set_all_types_expr(decl.value.as_ref(), decl.ty.get().unwrap());
-        self.vars.insert(decl.id.name, decl.kind);
+        // self.vars.insert(decl.id.name, decl.kind);
+        outer_scp.insert(decl.id.name, decl.kind);
         self.cached_ty.insert(decl.id.name, decl.ty.get().unwrap());
     }
 
-    fn visit_scope(&mut self, scope: &ast::Scope) {
+    fn visit_scope(&mut self, scope: &ast::Scope, outer_scp: &mut SemaScope) {
+        let mut loc_scp = SemaScope::new();
+        outer_scp.iter().for_each(|(&k, &v)| {
+            loc_scp.insert(k, v);
+        });
         for stmt in &scope.stmts {
-            self.visit_stmt(stmt);
+            self.visit_stmt(stmt, &mut loc_scp);
         }
     }
 
-    fn visit_stmt_exit(&mut self, enode: &ast::StmtExit) {
-        self.visit_expr(&enode.exit_code);
+    fn visit_stmt_exit(&mut self, enode: &ast::StmtExit, outer_scp: &mut SemaScope) {
+        self.visit_expr(&enode.exit_code, outer_scp);
     }
-    fn visit_stmt_if(&mut self, stmt_if: &ast::StmtIf) {
-        self.visit_expr(&stmt_if.cond);
-        self.visit_scope(&stmt_if.scope);
+    fn visit_stmt_if(&mut self, stmt_if: &ast::StmtIf, outer_scp: &mut SemaScope) {
+        self.visit_expr(&stmt_if.cond, outer_scp);
+        self.visit_scope(&stmt_if.scope, outer_scp);
 
         for elif in stmt_if._elif.iter().flatten() {
-            self.visit_expr(&elif.cond);
-            self.visit_scope(&elif.scope);
+            self.visit_expr(&elif.cond, outer_scp);
+            self.visit_scope(&elif.scope, outer_scp);
         }
         if let Some(maybe_else) = &stmt_if._else {
-            self.visit_scope(&maybe_else.scope);
+            self.visit_scope(&maybe_else.scope, outer_scp);
         }
+    }
+    fn visit_stmt_while(&mut self, stmt_while: &ast::StmtWhile, outer_scp: &mut SemaScope) {
+        self.visit_expr(&stmt_while.cond, outer_scp);
+        self.visit_scope(&stmt_while.scope, outer_scp);
     }
 
     pub fn validate_program(&mut self) -> Result<(), Box<dyn Error>> {
+        let mut global_scope = SemaScope::new();
         let stmts = std::mem::take(&mut self.prog.stmts);
         for stmt in &stmts {
-            self.visit_stmt(stmt);
+            self.visit_stmt(stmt, &mut global_scope);
         }
         self.prog.stmts = stmts;
-        println!("AST: {:#?}", self.prog.stmts);
+        println!("AST: \n{:#?}", self.prog.stmts);
         Ok(())
     }
 }

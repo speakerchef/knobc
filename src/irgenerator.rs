@@ -1,5 +1,5 @@
 use core::panic;
-use std::{collections, error::Error, fmt::Display, rc::Rc};
+use std::{error::Error, fmt::Display, rc::Rc};
 
 use crate::{
     ast::{self, UnionNode},
@@ -40,7 +40,6 @@ impl Dump for KlirBlob {
                 KlirNode::Store(store) => store.dump(),
                 KlirNode::Call(call) => call.dump(),
                 KlirNode::Expr(op) => op.dump(),
-                KlirNode::Cond(cond) => cond.dump(),
                 KlirNode::Br(br) => br.dump(),
                 KlirNode::Label(label) => label.dump(),
             }
@@ -169,23 +168,6 @@ impl Dump for Expr {
 }
 
 #[derive(Debug)]
-pub struct Cond {
-    pub ty: ast::Type,
-    pub cond: lexer::Op,
-    pub _if: (String /* if body label */, Vec<KlirNode>),
-    pub _elif: Option<(String /* elif label */, Vec<KlirNode>)>,
-    pub _else: Option<(String, Vec<KlirNode>)>,
-    pub endif_label: String,
-    pub flag: String, // %result
-}
-
-impl Dump for Cond {
-    fn dump(&self) {
-        println!("    cond {}, {}, {}", self.ty, self.cond, self.flag,)
-    }
-}
-
-#[derive(Debug)]
 pub struct Cmp {
     pub ty: ast::Type,
     pub flag: String, // %result
@@ -220,7 +202,6 @@ pub enum KlirNode {
     Store(Store),
     Call(Call),
     Expr(Expr),
-    Cond(Cond),
     Br(Br),
     Label(Label),
 }
@@ -470,6 +451,9 @@ impl IrGenerator<'_> {
                 UnionNode::StmtIf(stmt_if) => {
                     self.visit_stmt_if(stmt_if);
                 }
+                UnionNode::Scope(scp) => {
+                    self.visit_scope(&scp.stmts);
+                }
                 _ => todo!("No visitor for this node type in IRGen"),
             }
         }
@@ -484,6 +468,7 @@ impl IrGenerator<'_> {
         let stmts = std::mem::take(&mut self.prog.stmts);
         self.visit_scope(&stmts);
         println!("IR: \n{:#?}", self.ir.nodes);
+        println!("IR TEXT DUMP:");
         self.ir.dump();
         self.prog.stmts = stmts;
         Ok(())

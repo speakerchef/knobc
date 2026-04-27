@@ -198,6 +198,7 @@ pub struct VarDecl {
     pub decl_type: Option<Type>, // user declared
     pub ty: Cell<Option<Type>>,  // must exist before IR (inferred at sema)
     pub value: Box<Expr>,        // expr type must match local ty
+    pub is_reassign: bool,
     pub loc: LocData,
 }
 
@@ -251,7 +252,7 @@ pub struct StmtElse {
     pub loc: LocData,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StmtWhile {
     pub cond: Expr,
     pub scope: Scope,

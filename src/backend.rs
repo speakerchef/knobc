@@ -319,7 +319,6 @@ impl CodeGenerator {
                 KlirNode::Label(label) => {
                     self.asm.push_str(&format!("{}:\n", label.name));
                 }
-                _ => todo!("WIP"),
             }
         }
         self.emit_epilogue();
