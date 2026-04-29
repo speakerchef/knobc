@@ -123,6 +123,7 @@ impl From<TokenType> for Type {
             TokenType::Tchar => Type::Char,
             TokenType::Tstring => Type::String,
             TokenType::Tbool => Type::Bool,
+            TokenType::Tvoid => Type::Void,
             _ => Type::None,
         }
     }
@@ -194,7 +195,7 @@ pub struct Expr {
 #[derive(Debug, Default, Clone)]
 pub struct VarDecl {
     pub kind: VarType,
-    pub id: Ident,
+    pub name: Symbol,
     pub decl_type: Option<Type>, // user declared
     pub ty: Cell<Option<Type>>,  // must exist before IR (inferred at sema)
     pub value: Box<Expr>,        // expr type must match local ty
@@ -209,18 +210,19 @@ pub struct Scope {
     pub fns: HashMap<Symbol, Rc<StmtFn>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StmtFn {
-    pub id: Ident,
-    pub args: Vec<Ident>,
+    pub name: Symbol,
+    pub args: Option<Vec<(Type, Symbol)>>,
     pub body: Scope,
+    pub return_ty: Type,
     pub loc: LocData,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Call {
-    pub id: Ident,
-    pub args: Vec<Expr>,
+    pub id: Symbol,
+    pub args: Option<Vec<Expr>>,
     pub loc: LocData,
 }
 
@@ -267,7 +269,7 @@ pub enum UnionNode {
     VarDecl(Rc<VarDecl>),
     Scope(Scope),
     Call(Call),
-    StmtFn(StmtFn),
+    StmtFn(Rc<StmtFn>),
     StmtExit(StmtExit),
     StmtIf(StmtIf),
     StmtElif(StmtElif),

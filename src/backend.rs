@@ -1,17 +1,30 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     ast,
     irgenerator::{ArgType, KlirBlob, KlirNode},
     lexer,
 };
+
+struct AsmMetadata {
+    entry: Rc<str>,
+    align: usize,
+}
+
+struct FuncScopes {
+    name: Rc<str>,
+    data: String,
+    stackptr: usize,
+    vars: HashMap<String, (ast::Type, usize /* register counter */)>,
+}
+
 pub struct CodeGenerator {
     ir: KlirBlob,
     pub asm: String,
+    fns: Vec<Box<FuncScopes>>, // non-inlined function bodies
+
     stackptr: usize,
-    stacksz: usize,
     vars: HashMap<String, (ast::Type, usize /* register counter */)>,
-    allocated: HashMap<String /* varname */, bool /* is allocated */>,
 }
 
 impl CodeGenerator {
@@ -19,10 +32,9 @@ impl CodeGenerator {
         CodeGenerator {
             ir,
             asm: String::new(),
+            fns: Vec::new(),
             stackptr: 0,
-            stacksz: 0,
             vars: HashMap::new(),
-            allocated: HashMap::new(),
         }
     }
     fn emit_typed_load(&mut self, ty: &ast::Type, reg_idx: usize, addr: usize) {
@@ -216,67 +228,49 @@ impl CodeGenerator {
             _ => todo!("Type not impl for `mov` yet"),
         }
     }
-    fn emit_epilogue(&mut self) {
+    fn emit_epilogue(&mut self, amt: usize) {
+        self.asm.push_str(&format!("    add     sp, sp, {}\n", amt));
+    }
+    fn emit_prologue(&mut self, amt: usize) {
         self.asm
-            .push_str(&format!("    add     sp, sp, {}", self.stacksz));
+            .insert_str(0, &format!("    sub     sp, sp, {}\n", amt));
+    }
+    fn emit_metadata(&mut self, md: AsmMetadata) {
+        self.asm.insert_str(
+            0,
+            &format!(".global {}\n.align {}\n{}:\n", md.entry, md.align, md.entry),
+        );
     }
 
     pub fn generate(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.asm.push_str(".global _main\n.align 4\n_main:\n");
-
-        // Stack allocation
-        let num_nodes_to_alloc = self
-            .ir
-            .nodes
-            .iter()
-            .filter(|&node| matches!(node, KlirNode::Alloca(_)))
-            .count();
-        let alloca_sz = 16 * (num_nodes_to_alloc + 1);
-        self.asm
-            .push_str(&format!("    sub     sp, sp, {}\n", alloca_sz));
-        self.stacksz += alloca_sz;
-
         let nodes = std::mem::take(&mut self.ir.nodes);
         for node in &nodes {
             match node {
-                KlirNode::Alloca(alloca) => {
-                    self.allocated.insert(alloca.dest.clone(), true);
-                }
-                KlirNode::Store(store) => {
-                    match &store.src {
-                        ArgType::Imm(val) => {
-                            self.emit_typed_move(&store.ty, 8, *val);
-                            self.emit_typed_store(&store.ty, 8, None);
-                            self.vars
-                                .insert(store.dest.clone(), (store.ty, self.stackptr));
+                KlirNode::Alloca(alloca) => {}
+                KlirNode::Store(store) => match &store.src {
+                    ArgType::Imm(val) => {
+                        self.emit_typed_move(&store.ty, 8, *val);
+                        self.emit_typed_store(&store.ty, 8, None);
+                        self.vars
+                            .insert(store.dest.clone(), (store.ty, self.stackptr));
+                    }
+                    ArgType::Sym(name) | ArgType::Temp(name) => {
+                        let &(src_ty, src_addr) = self.vars.get(name).unwrap();
+                        if let Some(&(dst_ty, dst_addr)) = self.vars.get(&store.dest) {
+                            self.emit_typed_load(&src_ty, 8, src_addr);
+                            self.emit_typed_store(&dst_ty, 8, Some(dst_addr));
+                            self.vars.insert(store.dest.clone(), (dst_ty, dst_addr));
                             self.stackptr += 8;
-                        }
-                        ArgType::Sym(name) | ArgType::Temp(name) => {
-                            let &(src_ty, src_addr) = self.vars.get(name).unwrap();
-                            if let Some(&(dst_ty, dst_addr)) = self.vars.get(&store.dest) {
-                                self.emit_typed_load(&src_ty, 8, src_addr);
-                                self.emit_typed_store(&dst_ty, 8, Some(dst_addr));
-                                self.vars.insert(store.dest.clone(), (dst_ty, dst_addr));
-                            } else {
-                                self.vars.insert(store.dest.clone(), (src_ty, src_addr));
-                            }
-                            self.stackptr += 8;
+                        } else {
+                            self.vars.insert(store.dest.clone(), (src_ty, src_addr));
                         }
                     }
-                    self.stackptr += 8;
-                }
+                },
                 KlirNode::Expr(expr) => {
                     let mut reassign_addr = None;
                     match &expr.lhs {
-                        ArgType::Sym(name) => {
+                        ArgType::Sym(name) | ArgType::Temp(name) => {
                             println!("Sym Name: {name}, Expr Dest: {}", expr.dest);
-                            let &(ty, sym_addr) = self.vars.get(name).unwrap_or_else(|| {
-                                panic!("Error loading address for variable {name}")
-                            });
-                            self.emit_typed_load(&ty, 9, sym_addr);
-                        }
-                        ArgType::Temp(name) => {
-                            println!("Sym Name: {name}");
                             let &(ty, sym_addr) = self.vars.get(name).unwrap_or_else(|| {
                                 panic!("Error loading address for variable {name}")
                             });
@@ -287,19 +281,12 @@ impl CodeGenerator {
                         }
                     }
                     match &expr.rhs {
-                        ArgType::Sym(name) => {
+                        ArgType::Sym(name) | ArgType::Temp(name) => {
                             println!("Sym Name: {name}, Expr Dest: {}", expr.dest);
                             let &(ty, sym_addr) = self.vars.get(name).unwrap_or_else(|| {
                                 panic!("Error loading address for variable {name}")
                             });
                             self.emit_typed_load(&ty, 10, sym_addr);
-                        }
-                        ArgType::Temp(name) => {
-                            println!("Sym Name: {name}, Expr Dest: {}", expr.dest);
-                            let &(ty, sym_addr) = self.vars.get(name).unwrap_or_else(|| {
-                                panic!("Error loading address for variable {name}")
-                            });
-                            self.emit_typed_load(&ty, 9, sym_addr);
                         }
                         ArgType::Imm(val) => {
                             self.asm.push_str(&format!("    mov     x10, {}\n", val));
@@ -326,18 +313,36 @@ impl CodeGenerator {
                         ),
                     );
                 }
-                KlirNode::Call(call) => {
-                    for (argc, (ty, arg_type)) in call.args.iter().enumerate() {
-                        match arg_type {
-                            ArgType::Imm(val) => self.emit_typed_move(ty, argc, *val),
-                            ArgType::Temp(name) | ArgType::Sym(name) => {
-                                let &(var_ty, addr) = self.vars.get(name).unwrap();
-                                self.emit_typed_load(&var_ty, argc, addr);
+                KlirNode::Define(define) => {
+                    self.asm.push_str(&format!("{}:\n", define.name));
+                    if let Some(args) = &define.args {
+                        for (argc, (ty, arg_type)) in args.iter().enumerate() {
+                            match arg_type {
+                                ArgType::Imm(val) => self.emit_typed_move(ty, argc, *val),
+                                ArgType::Temp(name) | ArgType::Sym(name) => {
+                                    self.vars.insert(name.clone(), (*ty, 0)); // forward decl of these vars
+                                    // let &(var_ty, addr) = self.vars.get(name).unwrap();
+                                    // self.emit_typed_load(&var_ty, argc, addr);
+                                }
                             }
                         }
                     }
-                    self.asm
-                        .push_str(&format!("    bl      {}\n", call.methodname));
+                    // self.asm.push_str(&format!("    bl      {}\n", define.name));
+                }
+                KlirNode::Call(call) => {
+                    if let Some(args) = &call.args {
+                        for (argc, (ty, arg_type)) in args.iter().enumerate() {
+                            // TODO: Emit loads for argument variables passed in
+                            match arg_type {
+                                ArgType::Imm(val) => self.emit_typed_move(ty, argc, *val),
+                                ArgType::Temp(name) | ArgType::Sym(name) => {
+                                    let &(var_ty, addr) = self.vars.get(name).unwrap();
+                                    self.emit_typed_load(&var_ty, argc, addr);
+                                }
+                            }
+                        }
+                    }
+                    self.asm.push_str(&format!("    bl      {}\n", call.name));
                 }
                 KlirNode::Br(br) => {
                     if let Some(flag) = &br.flag {
@@ -355,9 +360,20 @@ impl CodeGenerator {
                 KlirNode::Label(label) => {
                     self.asm.push_str(&format!("{}:\n", label.name));
                 }
+                _ => todo!(),
             }
         }
-        self.emit_epilogue();
+
+        // NOTE: This is globally effective
+        // Arm64 16byte alignment requirement
+        let aligned_size = self.stackptr.next_multiple_of(16);
+        let md = AsmMetadata {
+            entry: "_main".into(),
+            align: 4,
+        };
+        self.emit_prologue(aligned_size);
+        self.emit_metadata(md);
+        self.emit_epilogue(aligned_size);
         println!("ASSEMBLY: \n{}", self.asm);
         self.ir.nodes = nodes;
         Ok(())

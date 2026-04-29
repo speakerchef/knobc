@@ -39,6 +39,7 @@ pub enum Op {
     Gt,
     Lte,
     Gte,
+    ThinArrow,
 }
 
 impl From<Token> for Op {
@@ -87,6 +88,7 @@ impl Display for Op {
             Op::Gt => write!(f, ">"),
             Op::Lte => write!(f, "<="),
             Op::Gte => write!(f, ">="),
+            Op::ThinArrow => write!(f, "->"),
         }
     }
 }
@@ -116,6 +118,7 @@ pub enum TokenType {
     Tchar,
     Tstring,
     Tbool,
+    Tvoid,
     KwReturn,
     KwFn,
     KwLet,
@@ -153,12 +156,33 @@ impl TokenType {
     pub fn is_op(&self) -> bool {
         matches!(*self, TokenType::Op(_))
     }
+    pub fn is_type_token(&self) -> bool {
+        return matches!(
+            self,
+            TokenType::Ti8
+                | TokenType::Ti16
+                | TokenType::Ti32
+                | TokenType::Ti64
+                | TokenType::Tu8
+                | TokenType::Tchar
+                | TokenType::Tbool
+                | TokenType::Tu16
+                | TokenType::Tu32
+                | TokenType::Tu64
+                | TokenType::Tf32
+                | TokenType::Tf64
+                | TokenType::Tusize
+                | TokenType::Tstring
+                | TokenType::Tvoid,
+        );
+    }
 
     pub fn char_to_token(ch: char) -> TokenType {
         match ch {
             ' ' => TokenType::WhiteSpace,
             '\n' => TokenType::NewLine,
             ';' => TokenType::Semi,
+            ',' => TokenType::Comma,
             ':' => TokenType::Colon,
             '(' => TokenType::Lparen,
             ')' => TokenType::Rparen,
@@ -268,6 +292,10 @@ impl Iter for Lexer {
 
     fn peek_behind(&self) -> Option<&Self::Item> {
         self.tokens.get(self.tok_ptr - 1)
+    }
+
+    fn peek_ahead(&self) -> Option<&Self::Item> {
+        self.tokens.get(self.tok_ptr + 1)
     }
 
     fn next(&mut self) -> Option<&Self::Item> {
@@ -414,6 +442,7 @@ impl Lexer {
             "&&" => Op::LgAnd,
             "||" => Op::LgOr,
             "!" => Op::LgNot,
+            "->" => Op::ThinArrow,
             _ => {
                 println!("NOP Operator: {}", op);
                 Op::Nop
@@ -477,6 +506,10 @@ impl Lexer {
             }),
             "string" => Ok(Token {
                 kind: TokenType::Tstring,
+                loc,
+            }),
+            "void" => Ok(Token {
+                kind: TokenType::Tvoid,
                 loc,
             }),
             "exit" => Ok(Token {

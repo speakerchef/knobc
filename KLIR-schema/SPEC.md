@@ -33,7 +33,6 @@
 | `call` \<T>, \<function>(\[\<T> args...])  | `call` void print(i32 %foo, u8 %bar) |
 | `define` \<T>, \<function>(\[\<T> args...])  | `define` i8 fizzbuzz(i32 %fizz, i32 %buzz)  |
 | `label` \<name>:  | `label` mycondition: |
-| `cmp` \<T>, \<cond>, \<lhs>, \<rhs>, \<dest>  | `cmp` i32, `lte`, %foo, %bar, %result  |
 | `br` \<label>, \<optional-flag>  | `br` lb_body, %result *OR* `br` lb_else |
 | Conditions \<cond> |
 |-|

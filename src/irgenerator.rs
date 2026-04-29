@@ -4,7 +4,7 @@ use std::{error::Error, fmt::Display, rc::Rc};
 use crate::{
     ast::{self, UnionNode},
     diagnostics::DiagHandler,
-    lexer,
+    lexer::{self, Symbol},
 };
 
 #[derive(Default, Debug)]
@@ -38,6 +38,7 @@ impl Dump for KlirBlob {
             match node {
                 KlirNode::Alloca(alloca) => alloca.dump(),
                 KlirNode::Store(store) => store.dump(),
+                KlirNode::Define(define) => define.dump(),
                 KlirNode::Call(call) => call.dump(),
                 KlirNode::Expr(op) => op.dump(),
                 KlirNode::Br(br) => br.dump(),
@@ -65,8 +66,8 @@ pub enum ArgType {
 impl Display for ArgType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ArgType::Sym(id) => write!(f, "{}", id),
-            ArgType::Temp(temp_reg) => write!(f, "{}", temp_reg),
+            ArgType::Sym(id) => write!(f, "%{}", id),
+            ArgType::Temp(temp_reg) => write!(f, "%{}", temp_reg),
             ArgType::Imm(val) => write!(f, "{}", val),
         }
     }
@@ -84,26 +85,53 @@ pub struct Alloca {
 
 impl Dump for Alloca {
     fn dump(&self) {
-        println!("    alloca {}, {}", self.ty, self.dest.clone())
+        println!("    alloca {}, %{}", self.ty, self.dest.clone())
+    }
+}
+
+#[derive(Debug)]
+pub struct Define {
+    pub return_ty: ast::Type,
+    pub name: String,
+    pub args: Option<Vec<(ast::Type, ArgType)>>,
+}
+
+impl Dump for Define {
+    fn dump(&self) {
+        print!("    define {}, %{}", self.return_ty, self.name);
+        print!("(");
+        if let Some(args) = &self.args {
+            for arg in args {
+                print!("{} ", arg.0);
+                print!("{}", arg.1);
+                if arg.ne(args.iter().last().unwrap()) {
+                    print!(", ")
+                }
+            }
+        }
+        print!("):");
+        println!();
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Call {
     pub return_ty: ast::Type,
-    pub methodname: String,
-    pub args: Vec<(ast::Type, ArgType)>,
+    pub name: String,
+    pub args: Option<Vec<(ast::Type, ArgType)>>,
 }
 
 impl Dump for Call {
     fn dump(&self) {
-        print!("    call {}, {}", self.return_ty, self.methodname);
+        print!("    call {}, {}", self.return_ty, self.name);
         print!("(");
-        for arg in &self.args {
-            print!("{} ", arg.0);
-            print!("{}", arg.1);
-            if arg.ne(self.args.iter().last().unwrap()) {
-                print!(",")
+        if let Some(args) = &self.args {
+            for arg in args {
+                print!("{} ", arg.0);
+                print!("{}", arg.1);
+                if arg.ne(args.iter().last().unwrap()) {
+                    print!(", ")
+                }
             }
         }
         print!(")");
@@ -161,17 +189,10 @@ impl Dump for Expr {
             _ => panic!("unimplemented op"),
         };
         println!(
-            "    {} {}, {}, {}, {}",
+            "    {} {}, {}, {}, %{}",
             strop, self.ty, self.lhs, self.rhs, self.dest
         )
     }
-}
-
-#[derive(Debug)]
-pub struct Cmp {
-    pub ty: ast::Type,
-    pub flag: String, // %result
-    pub jump: String,
 }
 
 #[derive(Debug)]
@@ -180,7 +201,7 @@ pub struct Label {
 }
 impl Dump for Label {
     fn dump(&self) {
-        println!("    label {}", self.name,)
+        println!("label {}:", self.name,)
     }
 }
 
@@ -192,7 +213,15 @@ pub struct Br {
 
 impl Dump for Br {
     fn dump(&self) {
-        println!("    br {}", self.label,)
+        println!(
+            "    br {}, {}",
+            self.label,
+            if let Some(flag) = &self.flag {
+                flag.clone()
+            } else {
+                "unconditional".to_string()
+            }
+        )
     }
 }
 
@@ -200,6 +229,7 @@ impl Dump for Br {
 pub enum KlirNode {
     Alloca(Alloca),
     Store(Store),
+    Define(Define),
     Call(Call),
     Expr(Expr),
     Br(Br),
@@ -225,16 +255,7 @@ impl IrGenerator<'_> {
             let lvalue = self.visit_expr(lhs);
             let rvalue = self.visit_expr(rhs);
             let dest = format!("t{}", self.reg_counter);
-
-            // Node Data
-            self.ir.nodes.push(KlirNode::Alloca(Alloca {
-                ty: expr
-                    .ty
-                    .get()
-                    .expect("Could not resolve type at dest register allocation"),
-                dest: dest.clone(),
-            }));
-            self.reg_counter += 1;
+            self.reg_counter += 1; // NOTE: this
 
             let lhs;
             let rhs;
@@ -277,10 +298,10 @@ impl IrGenerator<'_> {
                 .ty
                 .get()
                 .expect("Could not resolve type at temp register allocation"),
-            dest: format!("{}", decl.id.name),
+            dest: format!("{}", decl.name),
         }));
         self.ir.nodes.push(KlirNode::Store(Store {
-            ty: decl.ty.get().expect(""),
+            ty: decl.ty.get().expect("failed to get decl.ty at visit_decl"),
             src: if let Some(ref temp) = temp {
                 ArgType::Temp(temp.clone())
             } else {
@@ -290,7 +311,7 @@ impl IrGenerator<'_> {
                     ast::AtomKind::None => panic!("unexpected None atomkind"),
                 }
             },
-            dest: format!("{}", decl.id.name),
+            dest: decl.name.to_string(),
         }))
     }
     fn visit_stmt_exit(&mut self, enode: &ast::StmtExit) {
@@ -304,8 +325,8 @@ impl IrGenerator<'_> {
 
         self.ir.nodes.push(KlirNode::Call(Call {
             return_ty: ast::Type::Void,
-            methodname: String::from("_exit"),
-            args: vec![(
+            name: String::from("_exit"),
+            args: Some(vec![(
                 ty,
                 if let Some(ref temp) = temp {
                     ArgType::Temp(temp.clone())
@@ -316,7 +337,7 @@ impl IrGenerator<'_> {
                         ast::AtomKind::None => panic!("unexpected None atomkind here"),
                     }
                 },
-            )],
+            )]),
         }))
     }
     fn visit_stmt_if(&mut self, stmt_if: &ast::StmtIf) {
@@ -477,6 +498,23 @@ impl IrGenerator<'_> {
         }));
     }
 
+    fn visit_stmt_fn(&mut self, stmt_fn: &ast::StmtFn) {
+        self.ir.nodes.push(KlirNode::Define(Define {
+            return_ty: stmt_fn.return_ty,
+            name: stmt_fn.name.to_string(),
+            args: if let Some(args) = &stmt_fn.args {
+                Some(
+                    args.iter()
+                        .map(|&(ty, sym)| (ty, ArgType::Sym(sym.to_string())))
+                        .collect(),
+                )
+            } else {
+                None
+            },
+        }));
+        self.visit_scope(&stmt_fn.body.stmts);
+    }
+
     fn visit_scope(&mut self, stmts: &[UnionNode]) {
         for stmt in stmts {
             match stmt {
@@ -494,6 +532,9 @@ impl IrGenerator<'_> {
                 }
                 UnionNode::StmtWhile(stmt_while) => {
                     self.visit_stmt_while(stmt_while);
+                }
+                UnionNode::StmtFn(stmt_fn) => {
+                    self.visit_stmt_fn(Rc::clone(stmt_fn).as_ref());
                 }
                 UnionNode::Scope(scp) => {
                     self.visit_scope(&scp.stmts);

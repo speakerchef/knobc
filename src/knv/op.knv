@@ -1,3 +1,4 @@
-mut bar = 6000000000;
-bar = bar - 5;
+mut bar = (4 + 4) * 2;
+bar = bar - 4 * 2;
+bar = 2 + 0 + 8;
 exit bar;

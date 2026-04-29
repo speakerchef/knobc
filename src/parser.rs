@@ -1,11 +1,16 @@
-use std::{cell::Cell, error::Error, rc::Rc};
+use std::{cell::Cell, error::Error, process::exit, rc::Rc, thread::LocalKey};
 
 use crate::{
     ast::{self, AtomKind, Type, VarType},
     diagnostics::DiagHandler,
-    lexer::{Lexer, LocData, Op, Token, TokenType},
+    lexer::{self, Lexer, LocData, Op, Symbol, Token, TokenType},
     traits::Iter,
 };
+
+enum ArgVec {
+    FnDefArgs(Vec<(ast::Type, Symbol)>),
+    FnCallArgs(Vec<ast::Expr>),
+}
 
 pub struct Parser<'a> {
     diag: &'a mut DiagHandler,
@@ -80,10 +85,7 @@ impl Parser<'_> {
                 );
                 return None;
             };
-            decl.id = ast::Ident {
-                name: sym,
-                loc: idtok.loc,
-            };
+            decl.name = sym;
             self.lex.next(); // eat ident
 
             // Check for declared type
@@ -164,13 +166,10 @@ impl Parser<'_> {
             }
         }
 
-        // early return on delimiters like ; ) }
+        // early return on delimiters like ; ) } ,
         if let Some(&tok) = self.lex.peek() {
             match tok.kind {
-                TokenType::Rparen => {
-                    return lhs;
-                }
-                TokenType::Semi | TokenType::Rcurly => {
+                TokenType::Rparen | TokenType::Semi | TokenType::Rcurly | TokenType::Comma => {
                     return lhs;
                 }
                 _ => { /* fall-through */ }
@@ -251,7 +250,7 @@ impl Parser<'_> {
             if let Some(rhs) = self.parse_expr(rbp) {
                 let aggregate_node = ast::Expr {
                     atom: AtomKind::None,
-                    loc: lhs.as_mut().unwrap().loc,
+                    loc: lhs.as_ref().unwrap().loc,
                     op,
                     lhs: Some(Box::new(lhs.unwrap())),
                     rhs: Some(Box::new(rhs)),
@@ -390,11 +389,209 @@ impl Parser<'_> {
 
         stmt_while
     }
+    fn parse_args(&mut self, is_call: bool) -> Option<ArgVec> {
+        if !self.validate_tok(TokenType::Lparen) {
+            self.diag
+                .push_err(self.lex.peek_behind().unwrap().loc, "expected `(`");
+        } else {
+            self.lex.next(); // eat '('
+        }
+        let mut def_args = Vec::<(ast::Type, Symbol)>::new();
+        let mut call_args = Vec::<ast::Expr>::new();
+        let def = lexer::Token::default();
+        if is_call {
+            loop {
+                let loc = self
+                    .lex
+                    .peek()
+                    .unwrap_or_else(|| {
+                        self.diag
+                            .push_err(self.lex.peek_behind().unwrap().loc, "expected token");
+                        &def
+                    })
+                    .loc;
+                call_args.push(self.parse_expr(0.).unwrap_or_else(|| {
+                    self.diag
+                        .push_err(loc, "received invalid arguments to function call");
+                    ast::Expr::default()
+                }));
+                println!("Token before eating arg {:#?}", self.lex.peek().unwrap());
+
+                if self.validate_tok(TokenType::Rparen) {
+                    break;
+                } else if !self.validate_tok(TokenType::Comma) {
+                    println!("Sumn went wrong");
+                    self.diag
+                        .push_err(loc, "expected `,` between function arguments");
+                } else {
+                    self.lex.next(); //eat ',' & advance to next arg
+                }
+            }
+        } else {
+            loop {
+                // eat 1 ahead to look behind
+                self.lex.next();
+                if let (Some(&ty), Some(&arg)) = (self.lex.peek_behind(), self.lex.peek()) {
+                    if ty.kind.is_type_token() && matches!(arg.kind, TokenType::VarIdent(_)) {
+                        if let TokenType::VarIdent(sym) = arg.kind {
+                            def_args.push((ast::Type::from(ty.kind), sym));
+                        } else {
+                            self.diag.push_err(
+                                self.lex.peek_behind().unwrap().loc,
+                                &format!("expected `VarIdent`; got `{}`", arg.kind),
+                            );
+                        }
+                    } else {
+                        self.diag.push_err(
+                            self.lex.peek_behind().unwrap().loc,
+                            "expected valid `Type, Identifier` pair for function arguments",
+                        );
+                    }
+                } else {
+                    return None;
+                }
+
+                self.lex.next(); // eat argname
+                if self.validate_tok(TokenType::Rparen) {
+                    break;
+                } else if !self.validate_tok(TokenType::Comma) {
+                    // self.diag
+                    //     .push_err(loc, "expected `,` between function arguments");
+                } else {
+                    self.lex.next(); //eat ',' & advance to next type
+                }
+            }
+        }
+        Some(if is_call {
+            ArgVec::FnCallArgs(call_args)
+        } else {
+            ArgVec::FnDefArgs(def_args)
+        })
+    }
+
+    fn parse_stmt_fn(&mut self, outer_scp: &mut ast::Scope) -> ast::StmtFn {
+        let mut stmt_fn = ast::StmtFn::default();
+        if let Some(tok) = self.lex.peek()
+            && let TokenType::VarIdent(name) = tok.kind
+        {
+            stmt_fn.name = name;
+            self.lex.next(); // eat name
+        } else {
+            self.diag.push_err(
+                self.lex
+                    .peek_behind()
+                    .unwrap_or_else(|| {
+                        self.diag.display_diagnostics();
+                        exit(1);
+                    })
+                    .loc,
+                "expected function identifier after `fn`",
+            );
+        }
+        stmt_fn.args = if let Some(args) = self.parse_args(false)
+            && let ArgVec::FnDefArgs(def_args) = args
+        {
+            Some(def_args)
+        } else {
+            None
+        };
+        println!("Fn Args: {:#?}", stmt_fn.args);
+        if !self.validate_tok(TokenType::Rparen) {
+            self.diag.push_err(
+                self.lex
+                    .peek_behind()
+                    .unwrap_or_else(|| {
+                        self.diag.display_diagnostics();
+                        exit(1);
+                    })
+                    .loc,
+                "expected `)`",
+            );
+        }
+        self.lex.next(); // eat ')'
+
+        self.lex.next(); // move ahead to read behind
+        if let Some(tok) = self.lex.peek_behind()
+            && let TokenType::Op(op) = tok.kind
+            && matches!(op, Op::ThinArrow)
+        // check for '->'
+        {
+            // self.lex.next(); // eat '->'
+            if let Some(&tok) = self.lex.peek() {
+                if tok.kind.is_type_token() {
+                    stmt_fn.return_ty = Type::from(tok.kind);
+                } else {
+                    self.diag.push_err(
+                        tok.loc,
+                        &format!("expected function return type; received `{}`", tok.kind),
+                    );
+                }
+                self.lex.next(); // eat return type
+            } else {
+                self.diag
+                    .push_err(tok.loc, &format!("expected function return type",));
+            }
+        } else {
+            stmt_fn.return_ty = Type::Void;
+        }
+        println!("Function return type: {}", stmt_fn.return_ty);
+
+        if !self.validate_tok(TokenType::Lcurly) {
+            self.diag.push_err(
+                self.lex
+                    .peek_behind()
+                    .unwrap_or_else(|| {
+                        self.diag.display_diagnostics();
+                        exit(1);
+                    })
+                    .loc,
+                "expected `{`",
+            );
+        }
+        self.lex.next(); // eat '{'
+        outer_scp.vars.iter().for_each(|(&k, v)| {
+            stmt_fn.body.vars.insert(k, Rc::clone(v));
+        });
+        outer_scp.fns.iter().for_each(|(&k, v)| {
+            stmt_fn.body.fns.insert(k, Rc::clone(v));
+        });
+        self.parse_scope(&mut stmt_fn.body).unwrap_or_else(|_| {
+            self.diag.push_err(
+                self.lex
+                    .peek_behind()
+                    .unwrap_or_else(|| {
+                        self.diag.display_diagnostics();
+                        exit(1);
+                    })
+                    .loc,
+                "invalid function body",
+            )
+        });
+        stmt_fn
+    }
+
+    fn parse_fn_call(&mut self, name: Symbol) -> ast::Call {
+        let mut call = ast::Call::default();
+        call.id = name;
+        self.lex.next(); // eat ident
+
+        call.args = if let Some(args) = self.parse_args(true)
+            && let ArgVec::FnCallArgs(call_args) = args
+        {
+            Some(call_args)
+        } else {
+            None
+        };
+        call
+    }
 
     fn parse_scope(&mut self, outer_scp: &mut ast::Scope) -> Result<(), Box<dyn Error>> {
         let mut loc_scp = ast::Scope::default();
         outer_scp.vars.iter().for_each(|(&k, v)| {
             loc_scp.vars.insert(k, Rc::clone(v));
+        });
+        outer_scp.fns.iter().for_each(|(&k, v)| {
+            loc_scp.fns.insert(k, Rc::clone(v));
         });
 
         while let Some(&tok) = self.lex.peek() {
@@ -416,19 +613,28 @@ impl Parser<'_> {
                         self.diag.push_err(tok.loc, "expected variable declaration");
                         ast::VarDecl::default()
                     };
-                    let sym = decl.id.name;
+                    let sym = decl.name;
                     let rc = Rc::new(decl);
 
                     loc_scp.vars.insert(sym, Rc::clone(&rc));
                     outer_scp.stmts.push(ast::UnionNode::VarDecl(rc));
                 }
-                TokenType::VarIdent(_sym) => {
-                    let mut decl = self.parse_var_decl(tok).unwrap();
-                    decl.is_reassign = true;
-                    let sym = decl.id.name;
-                    let rc = Rc::new(decl);
-                    loc_scp.vars.insert(sym, Rc::clone(&rc));
-                    outer_scp.stmts.push(ast::UnionNode::VarDecl(rc));
+                TokenType::VarIdent(sym) => {
+                    // check if fn call
+                    if let Some(tok) = self.lex.peek_ahead()
+                        && matches!(tok.kind, TokenType::Lparen)
+                    {
+                        println!("Is call");
+                        let call = self.parse_fn_call(sym);
+                        outer_scp.stmts.push(ast::UnionNode::Call(call));
+                    } else {
+                        let mut decl = self.parse_var_decl(tok).unwrap();
+                        decl.is_reassign = true;
+                        let sym = decl.name;
+                        let rc = Rc::new(decl);
+                        loc_scp.vars.insert(sym, Rc::clone(&rc));
+                        outer_scp.stmts.push(ast::UnionNode::VarDecl(rc));
+                    }
                 }
                 TokenType::KwIf => {
                     self.lex.next(); // eat 'if'
@@ -450,6 +656,14 @@ impl Parser<'_> {
                     let stmt_while = self.parse_stmt_while(&mut loc_scp);
                     outer_scp.stmts.push(ast::UnionNode::StmtWhile(stmt_while));
                 }
+                TokenType::KwFn => {
+                    self.lex.next(); // eat 'fn'
+                    let stmt_fn = self.parse_stmt_fn(&mut loc_scp);
+                    let sym = stmt_fn.name;
+                    let rc = Rc::new(stmt_fn);
+                    loc_scp.fns.insert(sym, Rc::clone(&rc));
+                    outer_scp.stmts.push(ast::UnionNode::StmtFn(rc));
+                }
                 TokenType::Semi => {
                     self.lex.next();
                     continue;
@@ -470,6 +684,7 @@ impl Parser<'_> {
         }
         Ok(())
     }
+
     pub fn create_program(&mut self) -> Result<ast::Program, Box<dyn Error>> {
         let mut global_scope = ast::Scope::default();
         self.parse_scope(&mut global_scope)?;
