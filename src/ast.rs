@@ -223,7 +223,7 @@ pub struct StmtFn {
 pub struct Call {
     pub name: Symbol,
     pub args: Option<Vec<Expr>>,
-    pub return_ty: Type,
+    pub return_ty: Cell<Option<Type>>,
     pub loc: LocData,
 }
 
@@ -281,5 +281,6 @@ pub enum UnionNode {
 #[derive(Debug, Default)]
 pub struct Program {
     pub sym: SymbolTable,
+    pub fns: HashMap<Symbol, Rc<StmtFn>>,
     pub stmts: Vec<UnionNode>,
 }

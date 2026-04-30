@@ -157,7 +157,7 @@ impl TokenType {
         matches!(*self, TokenType::Op(_))
     }
     pub fn is_type_token(&self) -> bool {
-        return matches!(
+        matches!(
             self,
             TokenType::Ti8
                 | TokenType::Ti16
@@ -174,7 +174,7 @@ impl TokenType {
                 | TokenType::Tusize
                 | TokenType::Tstring
                 | TokenType::Tvoid,
-        );
+        )
     }
 
     pub fn char_to_token(ch: char) -> TokenType {
@@ -564,7 +564,10 @@ impl Lexer {
 
                         return Ok(Token {
                             kind: TokenType::VarIdent(sym_id),
-                            loc,
+                            loc: LocData {
+                                line: loc.line,
+                                col: loc.col - symbol.len(),
+                            },
                         });
                     }
                 }

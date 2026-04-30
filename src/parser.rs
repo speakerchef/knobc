@@ -620,13 +620,19 @@ impl Parser<'_> {
     }
 
     fn parse_fn_call(&mut self, name: Symbol, outer_scp: &mut ast::Scope) -> ast::Call {
-        let mut call = ast::Call::default();
-        call.name = name;
+        let mut call = ast::Call {
+            name,
+            loc: self.lex.peek().unwrap().loc, // SAFETY: Guaranteed by entry into function
+            ..ast::Call::default()
+        };
         self.lex.next(); // eat ident
 
-        // TODO: Allow forward decls and update as definitions are received
-        // plan -> Create a list of pointers to calls that need types. At sema: Pass list and resolve types from defs. If no defs, spit error
-        call.return_ty = self.fns.get(&name).unwrap().return_ty; // SAFETY: NONE
+        call.return_ty
+            .set(if let Some(existing_fn) = self.fns.get(&name) {
+                Some(existing_fn.return_ty)
+            } else {
+                None
+            });
         call.args = if let Some(args) = self.parse_args(true)
             && let ArgVec::FnCallArgs(call_args) = args
         {
@@ -676,7 +682,6 @@ impl Parser<'_> {
                     if let Some(tok) = self.lex.peek_ahead()
                         && matches!(tok.kind, TokenType::Lparen)
                     {
-                        println!("Is call");
                         let call = self.parse_fn_call(sym, &mut loc_scp);
                         outer_scp.stmts.push(ast::UnionNode::Call(call));
                     } else {
@@ -741,8 +746,9 @@ impl Parser<'_> {
         let mut global_scope = ast::Scope::default();
         self.parse_scope(&mut global_scope)?;
         Ok(ast::Program {
-            sym: self.lex.sym.clone(),
+            sym: std::mem::take(&mut self.lex.sym),
             stmts: global_scope.stmts,
+            fns: std::mem::take(&mut self.fns),
         })
     }
 }

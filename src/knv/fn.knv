@@ -9,6 +9,3 @@ fn main() -> void {
     }
 }
 
-fn foo(exit_code: i32) -> void {
-    exit exit_code;
-}

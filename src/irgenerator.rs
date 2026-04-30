@@ -539,7 +539,7 @@ impl IrGenerator<'_> {
         let fn_name_as_str = fn_sym_as_str.as_ref().to_string();
         let mut nodes = std::mem::take(&mut outer_scp.ir.nodes);
         nodes.push(KlirNode::Call(Call {
-            return_ty: call.return_ty,
+            return_ty: call.return_ty.get().unwrap(), // SAFETY: Guaranteed by Sema
             name: fn_name_as_str,
             args: {
                 if let Some(call_args) = &call.args {
@@ -611,7 +611,6 @@ impl IrGenerator<'_> {
         println!("IR: \n{:#?}", self.ir.nodes);
         println!("IR TEXT DUMP:");
         self.ir.dump();
-        println!("SCOPE DUMP:\n{:#?}", self.scopes);
         self.prog.stmts = stmts;
         Ok(())
     }

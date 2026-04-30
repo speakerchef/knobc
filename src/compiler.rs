@@ -36,10 +36,16 @@ impl Compiler {
         let mut parser = Parser::new(&mut lex, &mut diagnostics)?;
         let mut program = parser.create_program()?;
         let mut symbol_table = std::mem::take(&mut program.sym);
+        let mut fn_table = std::mem::take(&mut program.fns);
 
         // Semantic analysis and type inference + checks
         println!("Semantic Analysis & Type Checking...");
-        let mut sema = Sema::new(&mut program, &mut diagnostics, &mut symbol_table);
+        let mut sema = Sema::new(
+            &mut program,
+            &mut diagnostics,
+            &mut symbol_table,
+            &mut fn_table,
+        );
         sema.validate_program()?;
         if diagnostics.has_errors() {
             diagnostics.display_diagnostics();

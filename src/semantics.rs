@@ -4,7 +4,7 @@ use crate::{
     lexer::{self},
 };
 use core::panic;
-use std::{collections::HashMap, error::Error, rc::Rc, str::Matches};
+use std::{collections::HashMap, error::Error, fmt::format, rc::Rc, str::Matches};
 
 type SemaScope = HashMap<lexer::Symbol, ast::VarType>;
 // type SemaScope = HashMap<lexer::Symbol, ast::VarDecl>;
@@ -13,18 +13,21 @@ pub struct Sema<'a> {
     diag: &'a mut DiagHandler,
     sym: &'a mut lexer::SymbolTable,
     cached_ty: HashMap<lexer::Symbol, ast::Type>,
+    fns: &'a mut HashMap<lexer::Symbol, Rc<ast::StmtFn>>,
 }
 impl Sema<'_> {
     pub fn new<'a>(
         prog: &'a mut ast::Program,
         diag: &'a mut DiagHandler,
         sym: &'a mut lexer::SymbolTable,
+        fns: &'a mut HashMap<lexer::Symbol, Rc<ast::StmtFn>>,
     ) -> Sema<'a> {
         Sema {
             prog,
             diag,
             sym,
             cached_ty: HashMap::new(),
+            fns,
         }
     }
     fn default_integer_resolution(
@@ -251,7 +254,19 @@ impl Sema<'_> {
     fn visit_fn_call(&mut self, call: &ast::Call, outer_scp: &mut SemaScope) {
         // TODO: Impl logic to check passed type against fn decl arg types
         // TODO: impl logic to check if correct arg shape is passed in
-        println!("Is call");
+        if call.return_ty.get().is_none() {
+            if let Some(func) = self.fns.get(&call.name) {
+                call.return_ty.set(Some(func.return_ty));
+            } else {
+                self.diag.push_err(
+                    call.loc,
+                    &format!(
+                        "undeclared function identifier `{}`",
+                        self.sym.get(call.name).unwrap() // SAFETY: Guaranteed by lexer
+                    ),
+                );
+            }
+        }
         if let Some(args) = &call.args {
             for expr in args {
                 self.visit_expr(expr, outer_scp); // resolve types
@@ -310,7 +325,7 @@ impl Sema<'_> {
                         decl.loc,
                         &format!(
                             "use of undeclared identifier `{}`",
-                            self.sym.get(decl.name).unwrap()
+                            self.sym.get(decl.name).unwrap() // SAFETY: Guaranteed by lexer
                         ),
                     );
                 }
