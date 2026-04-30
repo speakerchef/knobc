@@ -454,99 +454,171 @@ impl Lexer {
         match tok {
             "i8" => Ok(Token {
                 kind: TokenType::Ti8,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 2,
+                },
             }),
             "i16" => Ok(Token {
                 kind: TokenType::Ti16,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 3,
+                },
             }),
             "i32" => Ok(Token {
                 kind: TokenType::Ti32,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 3,
+                },
             }),
             "i64" => Ok(Token {
                 kind: TokenType::Ti64,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 3,
+                },
             }),
             "u8" => Ok(Token {
                 kind: TokenType::Tu8,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 2,
+                },
             }),
             "u16" => Ok(Token {
                 kind: TokenType::Tu16,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 3,
+                },
             }),
             "u32" => Ok(Token {
                 kind: TokenType::Tu32,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 3,
+                },
             }),
             "u64" => Ok(Token {
                 kind: TokenType::Tu64,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 3,
+                },
             }),
             "usize" => Ok(Token {
                 kind: TokenType::Tusize,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 5,
+                },
             }),
             "f32" => Ok(Token {
                 kind: TokenType::Tf32,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 3,
+                },
             }),
             "f64" => Ok(Token {
                 kind: TokenType::Tf64,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 3,
+                },
             }),
             "char" => Ok(Token {
                 kind: TokenType::Tchar,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 4,
+                },
             }),
             "bool" => Ok(Token {
                 kind: TokenType::Tbool,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 4,
+                },
             }),
             "string" => Ok(Token {
                 kind: TokenType::Tstring,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 6,
+                },
             }),
             "void" => Ok(Token {
                 kind: TokenType::Tvoid,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 4,
+                },
             }),
             "exit" => Ok(Token {
                 kind: TokenType::KwExit,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 4,
+                },
             }),
             "let" => Ok(Token {
                 kind: TokenType::KwLet,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 3,
+                },
             }),
             "mut" => Ok(Token {
                 kind: TokenType::KwMut,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 3,
+                },
             }),
             "if" => Ok(Token {
                 kind: TokenType::KwIf,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 2,
+                },
             }),
             "elif" => Ok(Token {
                 kind: TokenType::KwElif,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 4,
+                },
             }),
             "else" => Ok(Token {
                 kind: TokenType::KwElse,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 4,
+                },
             }),
             "while" => Ok(Token {
                 kind: TokenType::KwWhile,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 5,
+                },
             }),
             "fn" => Ok(Token {
                 kind: TokenType::KwFn,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 2,
+                },
             }),
             "return" => Ok(Token {
                 kind: TokenType::KwReturn,
-                loc,
+                loc: LocData {
+                    line: loc.line,
+                    col: loc.col - 6,
+                },
             }),
             symbol => {
                 if !symbol.is_empty() {
