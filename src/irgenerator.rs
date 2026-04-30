@@ -27,9 +27,9 @@ impl From<&str> for Target {
 
 #[derive(Default, Debug)]
 pub struct KlirBlob {
-    pub text: String,
+    //TODO: Assign method names to scopes
+    //for classification
     pub nodes: Vec<KlirNode>,
-    pub target: Target,
 }
 
 impl Dump for KlirBlob {
@@ -48,11 +48,20 @@ impl Dump for KlirBlob {
     }
 }
 
+// kinda like a basic block
+#[derive(Debug, Default)]
+pub struct ProgScope {
+    pub id: String,
+    pub ir: KlirBlob,
+}
+
 pub struct IrGenerator<'a> {
     prog: &'a mut ast::Program,
     _diag: &'a mut DiagHandler,
     sym: &'a mut SymbolTable,
     pub ir: KlirBlob,
+    pub scopes: Vec<ProgScope>,
+    pub target: Target,
     reg_counter: usize,
     label_counter: usize,
 }
@@ -248,6 +257,8 @@ impl IrGenerator<'_> {
             _diag: diag,
             sym,
             ir: KlirBlob::default(),
+            target: Target::UnknownArch,
+            scopes: Vec::new(),
             reg_counter: 0,
             label_counter: 0,
         }
@@ -256,10 +267,11 @@ impl IrGenerator<'_> {
     fn visit_expr(
         &mut self,
         expr: &ast::Expr,
+        outer_scp: &mut ProgScope,
     ) -> (ast::AtomKind, Option<String /*temp register*/>) {
         if let (Some(lhs), Some(rhs)) = (&expr.lhs, &expr.rhs) {
-            let lvalue = self.visit_expr(lhs);
-            let rvalue = self.visit_expr(rhs);
+            let lvalue = self.visit_expr(lhs, outer_scp);
+            let rvalue = self.visit_expr(rhs, outer_scp);
             let dest = format!("t{}", self.reg_counter);
             self.reg_counter += 1; // NOTE: this
 
@@ -276,7 +288,7 @@ impl IrGenerator<'_> {
                 ast::AtomKind::None => rhs = ArgType::Temp(rvalue.1.as_ref().unwrap().clone()),
             }
             // opnode
-            self.ir.nodes.push(KlirNode::Expr(Expr {
+            outer_scp.ir.nodes.push(KlirNode::Expr(Expr {
                 ty: expr
                     .ty
                     .get()
@@ -297,16 +309,16 @@ impl IrGenerator<'_> {
         }
         (ast::AtomKind::default(), None)
     }
-    fn visit_decl(&mut self, decl: &ast::VarDecl) {
-        let (atom, temp) = self.visit_expr(decl.value.as_ref());
-        self.ir.nodes.push(KlirNode::Alloca(Alloca {
+    fn visit_decl(&mut self, decl: &ast::VarDecl, outer_scp: &mut ProgScope) {
+        let (atom, temp) = self.visit_expr(decl.value.as_ref(), outer_scp);
+        outer_scp.ir.nodes.push(KlirNode::Alloca(Alloca {
             ty: decl
                 .ty
                 .get()
                 .expect("Could not resolve type at temp register allocation"),
             dest: format!("{}", decl.name),
         }));
-        self.ir.nodes.push(KlirNode::Store(Store {
+        outer_scp.ir.nodes.push(KlirNode::Store(Store {
             ty: decl.ty.get().expect("failed to get decl.ty at visit_decl"),
             src: if let Some(ref temp) = temp {
                 ArgType::Temp(temp.clone())
@@ -320,8 +332,8 @@ impl IrGenerator<'_> {
             dest: decl.name.to_string(),
         }))
     }
-    fn visit_stmt_exit(&mut self, enode: &ast::StmtExit) {
-        let (atom, temp) = self.visit_expr(enode.exit_code.as_ref());
+    fn visit_stmt_exit(&mut self, enode: &ast::StmtExit, outer_scp: &mut ProgScope) {
+        let (atom, temp) = self.visit_expr(enode.exit_code.as_ref(), outer_scp);
         let ty = enode
             .exit_code
             .as_ref()
@@ -329,7 +341,7 @@ impl IrGenerator<'_> {
             .get()
             .expect("Could not get type for exit_code");
 
-        self.ir.nodes.push(KlirNode::Call(Call {
+        outer_scp.ir.nodes.push(KlirNode::Call(Call {
             return_ty: ast::Type::Void,
             name: String::from("_exit"),
             args: Some(vec![(
@@ -346,8 +358,8 @@ impl IrGenerator<'_> {
             )]),
         }))
     }
-    fn visit_stmt_if(&mut self, stmt_if: &ast::StmtIf) {
-        let (atom, temp) = self.visit_expr(&stmt_if.cond);
+    fn visit_stmt_if(&mut self, stmt_if: &ast::StmtIf, outer_scp: &mut ProgScope) {
+        let (atom, temp) = self.visit_expr(&stmt_if.cond, outer_scp);
         let result = if let Some(temp) = temp {
             temp.clone()
         } else {
@@ -361,12 +373,12 @@ impl IrGenerator<'_> {
         self.label_counter += 1;
 
         // Conditional branch to if body
-        self.ir.nodes.push(KlirNode::Br(Br {
+        outer_scp.ir.nodes.push(KlirNode::Br(Br {
             label: if_body_label.clone(),
             flag: Some(result),
         }));
         // Branch to elif, else, or end
-        self.ir.nodes.push(KlirNode::Br(Br {
+        outer_scp.ir.nodes.push(KlirNode::Br(Br {
             label: if !stmt_if._elif.is_empty() {
                 init_elif_body_label.clone()
             } else if stmt_if._else.is_some() {
@@ -377,26 +389,26 @@ impl IrGenerator<'_> {
             flag: None,
         }));
         // If body start
-        self.ir.nodes.push(KlirNode::Label(Label {
+        outer_scp.ir.nodes.push(KlirNode::Label(Label {
             name: if_body_label.clone(),
         }));
         // Body scope
-        self.visit_scope(&stmt_if.scope.stmts);
+        self.visit_scope(&stmt_if.scope.stmts, outer_scp);
         // Jump to end
-        self.ir.nodes.push(KlirNode::Br(Br {
+        outer_scp.ir.nodes.push(KlirNode::Br(Br {
             label: endif_label.clone(),
             flag: None,
         }));
 
         // First elif init
         if !stmt_if._elif.is_empty() {
-            self.ir.nodes.push(KlirNode::Label(Label {
+            outer_scp.ir.nodes.push(KlirNode::Label(Label {
                 name: init_elif_body_label.clone(),
             }));
         }
         let mut elif_collection = stmt_if._elif.iter().flatten().peekable();
         while let Some(elif) = elif_collection.next() {
-            let (atom, temp) = self.visit_expr(&elif.cond);
+            let (atom, temp) = self.visit_expr(&elif.cond, outer_scp);
             let elif_result = if let Some(temp) = temp {
                 temp.clone()
             } else {
@@ -407,13 +419,13 @@ impl IrGenerator<'_> {
             self.label_counter += 1;
             let next_elif_body_label = format!("LABEL_ELIF_BODY_{}", self.label_counter);
             // Conditional branch to elif body
-            self.ir.nodes.push(KlirNode::Br(Br {
+            outer_scp.ir.nodes.push(KlirNode::Br(Br {
                 label: elif_body_label.clone(),
                 flag: Some(elif_result),
             }));
 
             //fallback Branch to other elifs, else, or end
-            self.ir.nodes.push(KlirNode::Br(Br {
+            outer_scp.ir.nodes.push(KlirNode::Br(Br {
                 label: if elif_collection.peek().is_some() {
                     next_elif_body_label.clone()
                 } else if stmt_if._else.is_some() {
@@ -424,53 +436,53 @@ impl IrGenerator<'_> {
                 flag: None,
             }));
             // current elif body label
-            self.ir.nodes.push(KlirNode::Label(Label {
+            outer_scp.ir.nodes.push(KlirNode::Label(Label {
                 name: elif_body_label.clone(),
             }));
-            self.visit_scope(&elif.scope.stmts);
+            self.visit_scope(&elif.scope.stmts, outer_scp);
             // Jump to end
-            self.ir.nodes.push(KlirNode::Br(Br {
+            outer_scp.ir.nodes.push(KlirNode::Br(Br {
                 label: endif_label.clone(),
                 flag: None,
             }));
 
             // other elifs labels
             if elif_collection.peek().is_some() {
-                self.ir.nodes.push(KlirNode::Label(Label {
+                outer_scp.ir.nodes.push(KlirNode::Label(Label {
                     name: next_elif_body_label,
                 }));
             }
         }
 
         // else body start
-        self.ir.nodes.push(KlirNode::Label(Label {
+        outer_scp.ir.nodes.push(KlirNode::Label(Label {
             name: else_body_label.clone(),
         }));
         // else body scope
         if let Some(maybeelse) = &stmt_if._else {
-            self.visit_scope(&maybeelse.scope.stmts);
+            self.visit_scope(&maybeelse.scope.stmts, outer_scp);
         }
         // Jump to end
-        self.ir.nodes.push(KlirNode::Br(Br {
+        outer_scp.ir.nodes.push(KlirNode::Br(Br {
             label: endif_label.clone(),
             flag: None,
         }));
         // end start
-        self.ir.nodes.push(KlirNode::Label(Label {
+        outer_scp.ir.nodes.push(KlirNode::Label(Label {
             name: endif_label.clone(),
         }));
     }
 
-    fn visit_stmt_while(&mut self, stmt_while: &ast::StmtWhile) {
+    fn visit_stmt_while(&mut self, stmt_while: &ast::StmtWhile, outer_scp: &mut ProgScope) {
         let start_while_label = format!("START_WHILE_{}", self.label_counter);
         let loop_while_label = format!("LOOP_WHILE_{}", self.label_counter);
         let end_while_label = format!("END_WHILE_{}", self.label_counter);
 
-        self.ir.nodes.push(KlirNode::Label(Label {
+        outer_scp.ir.nodes.push(KlirNode::Label(Label {
             name: start_while_label.clone(),
         }));
 
-        let (atom, temp) = self.visit_expr(&stmt_while.cond);
+        let (atom, temp) = self.visit_expr(&stmt_while.cond, outer_scp);
         self.label_counter += 1;
         let result = if let Some(temp) = temp {
             temp
@@ -478,55 +490,54 @@ impl IrGenerator<'_> {
             atom.to_string()
         };
         // Conditional br to while loop
-        self.ir.nodes.push(KlirNode::Br(Br {
+        outer_scp.ir.nodes.push(KlirNode::Br(Br {
             label: loop_while_label.clone(),
             flag: Some(result),
         }));
         // unconditional br to end
-        self.ir.nodes.push(KlirNode::Br(Br {
+        outer_scp.ir.nodes.push(KlirNode::Br(Br {
             label: end_while_label.clone(),
             flag: None,
         }));
         // start while loop
-        self.ir.nodes.push(KlirNode::Label(Label {
+        outer_scp.ir.nodes.push(KlirNode::Label(Label {
             name: loop_while_label.clone(),
         }));
-        self.visit_scope(&stmt_while.scope.stmts);
+        self.visit_scope(&stmt_while.scope.stmts, outer_scp);
         // unconditional br to start
-        self.ir.nodes.push(KlirNode::Br(Br {
+        outer_scp.ir.nodes.push(KlirNode::Br(Br {
             label: start_while_label.clone(),
             flag: None,
         }));
 
         // end while loop
-        self.ir.nodes.push(KlirNode::Label(Label {
+        outer_scp.ir.nodes.push(KlirNode::Label(Label {
             name: end_while_label.clone(),
         }));
     }
 
-    fn visit_stmt_fn(&mut self, stmt_fn: &ast::StmtFn) {
+    fn visit_stmt_fn(&mut self, stmt_fn: &ast::StmtFn) -> ProgScope {
+        let mut fn_scope = ProgScope::default();
         let fn_sym_as_str = self.sym.get(stmt_fn.name).unwrap();
         let fn_name_as_str = fn_sym_as_str.as_ref().to_string();
-        self.ir.nodes.push(KlirNode::Define(Define {
+        fn_scope.id = fn_name_as_str.clone();
+        fn_scope.ir.nodes.push(KlirNode::Define(Define {
             return_ty: stmt_fn.return_ty,
             name: fn_name_as_str,
-            args: if let Some(args) = &stmt_fn.args {
-                Some(
-                    args.iter()
-                        .map(|&(sym, ty)| (ArgType::Sym(sym.to_string()), ty))
-                        .collect(),
-                )
-            } else {
-                None
-            },
+            args: stmt_fn.args.as_ref().map(|args| {
+                args.iter()
+                    .map(|&(sym, ty)| (ArgType::Sym(sym.to_string()), ty))
+                    .collect()
+            }),
         }));
-        self.visit_scope(&stmt_fn.body.stmts);
+        self.visit_scope(&stmt_fn.body.stmts, &mut fn_scope);
+        fn_scope
     }
 
-    fn visit_fn_call(&mut self, call: &ast::Call) {
+    fn visit_fn_call(&mut self, call: &ast::Call, outer_scp: &mut ProgScope) {
         let fn_sym_as_str = self.sym.get(call.name).unwrap();
         let fn_name_as_str = fn_sym_as_str.as_ref().to_string();
-        let mut nodes = std::mem::take(&mut self.ir.nodes);
+        let mut nodes = std::mem::take(&mut outer_scp.ir.nodes);
         nodes.push(KlirNode::Call(Call {
             return_ty: call.return_ty,
             name: fn_name_as_str,
@@ -534,7 +545,7 @@ impl IrGenerator<'_> {
                 if let Some(call_args) = &call.args {
                     let mut arg_list = Vec::<(ArgType, ast::Type)>::new();
                     for expr in call_args {
-                        let (atom, temp) = self.visit_expr(expr);
+                        let (atom, temp) = self.visit_expr(expr, outer_scp);
                         let argkind = if let Some(temp) = temp {
                             ArgType::Temp(temp)
                         } else {
@@ -544,10 +555,8 @@ impl IrGenerator<'_> {
                                 _ => panic!("Impossible for now"),
                             }
                         };
-                        arg_list.push((
-                            argkind,
-                            expr.ty.get().as_ref().unwrap_or(&ast::Type::None).clone(),
-                        ));
+                        arg_list
+                            .push((argkind, *expr.ty.get().as_ref().unwrap_or(&ast::Type::None)));
                     }
                     Some(arg_list)
                 } else {
@@ -555,35 +564,36 @@ impl IrGenerator<'_> {
                 }
             },
         }));
-        self.ir.nodes = nodes;
+        outer_scp.ir.nodes = nodes;
     }
 
-    fn visit_scope(&mut self, stmts: &[UnionNode]) {
+    fn visit_scope(&mut self, stmts: &[UnionNode], outer_scp: &mut ProgScope) {
         for stmt in stmts {
             match stmt {
                 UnionNode::VarDecl(decl) => {
-                    self.visit_decl(Rc::clone(decl).as_ref());
+                    self.visit_decl(Rc::clone(decl).as_ref(), outer_scp);
                 }
                 UnionNode::StmtExit(enode) => {
-                    self.visit_stmt_exit(enode);
+                    self.visit_stmt_exit(enode, outer_scp);
                 }
                 UnionNode::Expr(expr) => {
-                    let _ = self.visit_expr(expr);
+                    let _ = self.visit_expr(expr, outer_scp);
                 }
                 UnionNode::StmtIf(stmt_if) => {
-                    self.visit_stmt_if(stmt_if);
+                    self.visit_stmt_if(stmt_if, outer_scp);
                 }
                 UnionNode::StmtWhile(stmt_while) => {
-                    self.visit_stmt_while(stmt_while);
+                    self.visit_stmt_while(stmt_while, outer_scp);
                 }
                 UnionNode::StmtFn(stmt_fn) => {
-                    self.visit_stmt_fn(Rc::clone(stmt_fn).as_ref());
+                    let fn_scope = self.visit_stmt_fn(Rc::clone(stmt_fn).as_ref());
+                    self.scopes.push(fn_scope);
                 }
                 UnionNode::Call(call) => {
-                    self.visit_fn_call(call);
+                    self.visit_fn_call(call, outer_scp);
                 }
                 UnionNode::Scope(scp) => {
-                    self.visit_scope(&scp.stmts);
+                    self.visit_scope(&scp.stmts, outer_scp);
                 }
                 _ => todo!("No visitor for this node type in IRGen"),
             }
@@ -593,14 +603,15 @@ impl IrGenerator<'_> {
     pub fn emit_klir(&mut self) -> Result<(), Box<dyn Error>> {
         let arch = std::env::consts::ARCH;
         self.ir = KlirBlob::default();
-        self.ir.target = Target::from(arch);
-        dbg!(&self.ir.target);
+        self.target = Target::from(arch);
+        dbg!(&self.target);
 
         let stmts = std::mem::take(&mut self.prog.stmts);
-        self.visit_scope(&stmts);
+        self.visit_scope(&stmts, &mut ProgScope::default());
         println!("IR: \n{:#?}", self.ir.nodes);
         println!("IR TEXT DUMP:");
         self.ir.dump();
+        println!("SCOPE DUMP:\n{:#?}", self.scopes);
         self.prog.stmts = stmts;
         Ok(())
     }

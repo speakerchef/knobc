@@ -51,7 +51,7 @@ impl Compiler {
         irgenerator.emit_klir()?;
 
         // Assembly CodeGen
-        let mut backend = CodeGenerator::new(irgenerator.ir);
+        let mut backend = CodeGenerator::new(irgenerator.scopes);
         backend.generate()?;
 
         std::fs::write("/tmp/knobc_asm_out.s", &backend.asm).expect("Error during compilation!");

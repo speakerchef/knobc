@@ -1,9 +1,14 @@
-fn main(exit_code: i32) -> void {
+fn main() -> void {
+    let x = 50;
+    let y = 90;
+    let res = x + y;
+    if res > 50 {
+        exit res;
+    } else {
+        foo(69);
+    }
+}
+
+fn foo(exit_code: i32) -> void {
     exit exit_code;
 }
-
-fn foo(arg1: i32, arg2: i32) -> void {
-    exit arg1;
-}
-
-main(69);

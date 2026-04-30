@@ -1,4 +1,6 @@
-use std::{cell::Cell, error::Error, process::exit, rc::Rc, thread::LocalKey};
+use std::{
+    cell::Cell, collections::HashMap, error::Error, process::exit, rc::Rc, thread::LocalKey,
+};
 
 use crate::{
     ast::{self, AtomKind, Type, VarType},
@@ -15,6 +17,7 @@ enum ArgVec {
 pub struct Parser<'a> {
     diag: &'a mut DiagHandler,
     lex: &'a mut Lexer,
+    fns: HashMap<Symbol, Rc<ast::StmtFn>>,
 }
 
 impl Parser<'_> {
@@ -25,6 +28,7 @@ impl Parser<'_> {
         Ok(Parser {
             diag: diagnostics,
             lex,
+            fns: HashMap::new(),
         })
     }
 
@@ -619,8 +623,10 @@ impl Parser<'_> {
         let mut call = ast::Call::default();
         call.name = name;
         self.lex.next(); // eat ident
-        // TODO: Make this safe
-        call.return_ty = outer_scp.fns.get(&name).unwrap().return_ty; // SAFETY: NONE
+
+        // TODO: Allow forward decls and update as definitions are received
+        // plan -> Create a list of pointers to calls that need types. At sema: Pass list and resolve types from defs. If no defs, spit error
+        call.return_ty = self.fns.get(&name).unwrap().return_ty; // SAFETY: NONE
         call.args = if let Some(args) = self.parse_args(true)
             && let ArgVec::FnCallArgs(call_args) = args
         {
@@ -707,7 +713,7 @@ impl Parser<'_> {
                     let stmt_fn = self.parse_stmt_fn(&mut loc_scp);
                     let sym = stmt_fn.name;
                     let rc = Rc::new(stmt_fn);
-                    loc_scp.fns.insert(sym, Rc::clone(&rc));
+                    self.fns.insert(sym, Rc::clone(&rc));
                     outer_scp.stmts.push(ast::UnionNode::StmtFn(rc));
                 }
                 TokenType::Semi => {
